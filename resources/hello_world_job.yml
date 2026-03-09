@@ -1,0 +1,23 @@
+resources:
+  jobs:
+    hello_world_job:
+      name: hello-world
+      tags:
+        project_name: "llmops-databricks-course-victor-kuznetsov"
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/*.whl
+
+      tasks:
+        - task_key: hello_world
+          environment_key: default
+          notebook_task:
+            notebook_path: ../notebooks/hello_world.py
+            base_parameters:
+              env: ${bundle.target}
+              git_sha: "${var.git_sha}"
+              run_id: "{{job.run_id}}"
