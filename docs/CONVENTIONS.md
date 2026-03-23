@@ -31,15 +31,32 @@
 - File names: `snake_case.py` in `notebooks/`
 - No `#!/usr/bin/env python` shebangs
 
+## Entry Points (`.whl` / `python_wheel_task`)
+
+| Item | Convention | Example |
+|---|---|---|
+| Entry point name | `artlake-<verb>-<noun>` (kebab-case) | `artlake-search`, `artlake-clean-events` |
+| `pyproject.toml` declaration | `[project.scripts]` section | `artlake-search = "llmops_...search.web:main"` |
+| Module function | `main()` in the domain module | `search/web.py` has `def main(): ...` |
+| Naming principle | Named for what the code **does**, not medallion layers | `clean/events.py` not `silver.py` |
+
 ## Delta Lake / Unity Catalog
 
 | Item | Convention | Example |
 |---|---|---|
 | Catalog | `snake_case` | `artlake` |
-| Schema | `snake_case` (medallion layer) | `bronze`, `silver`, `gold` |
-| Table | `snake_case` | `raw_events`, `events` |
+| Schema | `snake_case` (by purpose) | `staging`, `bronze`, `gold` |
+| Table | `snake_case` | `raw_events`, `seen_urls`, `events` |
 | Column | `snake_case` | `event_title`, `created_at` |
-| Full path | `catalog.schema.table` | `artlake.silver.events` |
+| Full path | `catalog.schema.table` | `artlake.gold.events` |
+
+### Schema purposes
+
+| Schema | Purpose |
+|---|---|
+| `staging` | Inter-task data (search results, scraped pages, seen URLs) — transient between pipeline runs |
+| `bronze` | Structured clean events (first persisted layer) |
+| `gold` | Categorised events, embeddings — ready for BI/serving |
 
 ## Git
 

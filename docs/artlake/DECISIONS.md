@@ -7,18 +7,19 @@
 
 ## ADR-001 · Search & Web Scraping
 
-**Decision**: Use `duckduckgo-search` (Python library) as the primary search engine wrapper, with `playwright` + `beautifulsoup4` for page scraping.
+**Decision**: Use `duckduckgo-search` (Python library) as the primary search engine wrapper, with `requests` + `beautifulsoup4` for page scraping.
 
 **Rationale**:
 - `duckduckgo-search` is free, requires no API key, and returns results in all four target languages (EN/NL/DE/FR). Sufficient for training-course data volumes.
-- `playwright` handles JavaScript-rendered pages; `beautifulsoup4` handles static HTML — together they cover most source types.
-- All three are open source and run natively in Databricks notebooks as Python packages.
+- `beautifulsoup4` + `requests` handles static HTML pages and is straightforward to deploy on Databricks clusters.
+- All packages are open source and run inside `.whl` entry points on Databricks.
 
-**Upgrade path**: Switch to **SerpAPI** (~$50/month, 5000 queries) if DuckDuckGo result quality or rate limits prove insufficient at production volumes.
+**Upgrade path**: Switch to **SerpAPI** (~$50/month, 5000 queries) if DuckDuckGo result quality, rate limits, or JS-rendered page content prove insufficient.
 
 **Rejected**:
 - Google Custom Search API — free tier limited to 100 queries/day, too restrictive.
 - Direct Google scraping — ToS violation.
+- `playwright` (headless Chromium) — deployment complexity on Databricks clusters (requires custom Docker images or init scripts for Chromium binaries). SerpAPI is a cleaner upgrade path for JS-rendered content.
 
 ---
 
@@ -58,29 +59,33 @@ Proceed to next option only if previous step's output quality is demonstrably wo
 
 ---
 
-## ADR-004 · Language Detection
+## ADR-004 · Language Targeting
 
-**Decision**: Use `lingua-language-detector` (open source).
+**Decision**: Handle language at the **search query level**, not as a separate post-filter. Search queries are generated per target language using translated keywords. Results are tagged with the query language. No `lingua-language-detector` pipeline step.
 
 **Rationale**:
-- Best accuracy among Python language detection libraries for short texts (event titles, snippets).
-- Handles NL, DE, FR, EN reliably — the four target languages.
-- Free, no external service dependency.
+- If we search with German keywords, we expect German results — a separate language detection step is redundant.
+- Reduces pipeline complexity (one fewer workflow task).
+- Multilingual keyword generation (base English → translated per language) gives us control over which languages we target.
 
-**Rejected**: `langdetect` — lower accuracy on short or mixed-language strings.
+**Retained for edge cases**: `lingua-language-detector` remains a dependency for optional quality checks within the scrape step (e.g., validating that a page returned by a German query is actually in German), but is not a standalone pipeline task.
+
+**Rejected approach**: Separate `artlake-detect-language` pipeline step — adds a workflow task with minimal value when search queries already control language.
 
 ---
 
 ## ADR-005 · Embeddings
 
-**Decision**: Use **Databricks Foundation Model API** (BGE-large-en-v1.5 or `databricks-bge-large-en`) hosted on the workspace.
+**Decision**: Use **Databricks Foundation Model API** (BGE-large-en-v1.5 or `databricks-bge-large-en`) hosted on the workspace, applied to **pre-translated** (English) content.
 
 **Rationale**:
 - Included in Databricks workspace — no additional cost.
 - Databricks-native: integrates directly with Vector Search and Agent Framework.
-- BGE-large produces high-quality multilingual embeddings suitable for EN/NL/DE/FR event descriptions.
+- BGE-large-en is an English-focused model. Content is pre-translated to the configured language (default: English) via ADR-018, so monolingual embeddings work well.
 
-**Upgrade path**: OpenAI `text-embedding-3-small` if multilingual quality proves insufficient (cost: ~$0.02/1M tokens).
+**Upgrade path**: OpenAI `text-embedding-3-small` if embedding quality proves insufficient (cost: ~$0.02/1M tokens).
+
+**Rejected**: Using a multilingual embedding model (e.g. `bge-m3`, `multilingual-e5-large`) — adds complexity. Translating content first and using a strong monolingual model is simpler and produces more consistent embeddings.
 
 ---
 
@@ -151,20 +156,131 @@ Proceed to next option only if previous step's output quality is demonstrably wo
 
 ---
 
+## ADR-012 · Execution Model
+
+**Decision**: All pipeline steps are `.whl` entry points executed via Databricks `python_wheel_task`. No notebooks for data processing.
+
+**Rationale**:
+- `.whl` packages are testable, versionable, and deployable as a unit.
+- `python_wheel_task` is the native Databricks mechanism for running wheel entry points in jobs.
+- Each module has its own `main()` function, declared in `pyproject.toml` `[project.scripts]`.
+- Notebooks are retained only for one-time setup tasks and interactive experimentation.
+
+**Rejected**: Databricks notebook tasks for pipeline steps — harder to test, version, and maintain as the codebase grows.
+
+---
+
+## ADR-013 · Country Filter over Radius Filter
+
+**Decision**: Ingestion pipeline filters by a configurable **list of target countries**, not by geographical radius. Radius-based distance filtering is deferred to Phase 3 (BI/presentation layer, user-interactive).
+
+**Rationale**:
+- Country filtering is cheaper — applied both at search query level (country name in query) and after geocoding.
+- Events already collected should not be discarded by the pipeline. Letting the user interactively set a radius in dashboards/Genie is more flexible.
+- Avoids wasting compute on re-filtering events that were expensive to scrape.
+- Lat/lng coordinates are still stored on every event for future BI use.
+
+---
+
+## ADR-014 · Seen-URL Tracking
+
+**Decision**: Maintain a persistent `artlake.staging.seen_urls` Delta table that stores **all** evaluated URLs — both accepted and filtered out — across pipeline runs.
+
+**Rationale**:
+- Prevents re-scraping URLs that were already evaluated and rejected (e.g., wrong country).
+- Fingerprint is the **full normalised URL** (not domain), supporting art aggregators where the domain is the same but event paths differ.
+- Title is a secondary signal for cross-site near-duplicate detection.
+- Status tracking (pending → accepted / filtered_country / duplicate) provides pipeline observability.
+
+---
+
+## ADR-015 · Artifact Handling (PDFs & Images)
+
+**Decision**: Detect, download, and process PDFs and images (posters, open call rules, flyers) found on event pages.
+
+**Rationale**:
+- Many art events publish detailed rules, deadlines, and requirements as PDF documents or poster images, not as web page text.
+- Missing this content would mean incomplete event information.
+- Raw artifacts stored in **Unity Catalog Volumes** (per ADR-009).
+- Processing pipeline: **`ai_parse_document`** (Databricks-native SQL function) for both PDF text extraction and image OCR → LLM-generated structured summary (deadline, requirements, location, fees) via Foundation Model API.
+
+**Rejected**: `pdfplumber` / `PyMuPDF` (Python libraries) — `ai_parse_document` is Databricks-native, handles both PDFs and images in a single function call, and avoids managing additional Python dependencies on the cluster.
+
+---
+
+## ADR-016 · Event Categorisation Strategy
+
+**Decision**: Start with **rule-based keyword matching** (MVP), then upgrade to **LLM-based classification** as a drop-in replacement.
+
+**Rationale**:
+- Rule-based approach is simpler to test, debug, and understand — good for initial development.
+- LLM-based classification provides better accuracy on edge cases and mixed-language content.
+- Both implementations share the same input/output contract, making the switch seamless.
+- Teaching both approaches aligns with the LLMOps course goal.
+
+---
+
+## ADR-017 · No Python Orchestration
+
+**Decision**: **Databricks Workflows is the sole orchestrator.** No Python-level pipeline orchestration (no `pipelines/` module, no `entrypoints/` wrapper).
+
+**Rationale**:
+- Databricks Workflows is purpose-built for task chaining, scheduling, retries, and monitoring.
+- Adding Python orchestration on top creates unnecessary sub-orchestration that duplicates Workflow capabilities.
+- Each domain module has its own `main()` that does one thing — Workflows chains them.
+- "Use the tools for what they are designed to be used for."
+
+**Rejected**: Python pipeline orchestrator module — misuses Databricks Workflows by reducing it to a single-task launcher.
+
+---
+
+## ADR-018 · Content Translation
+
+**Decision**: Translate all scraped content (title, description, location text) to a **configured target language** (default: English) via Databricks Foundation Model API before downstream processing.
+
+**Rationale**:
+- Eliminates the need for multilingual embeddings — BGE-large-en works well on English text.
+- Simplifies rule-based categorisation — keyword dictionaries needed only in one language instead of four.
+- LLM-based categorisation prompts are more reliable in a single language.
+- The user reads events in their preferred language anyway — translating early serves both pipeline and UX needs.
+- Events already in the target language are skipped (detected via query language tag from ADR-004).
+
+**Rejected**: Multilingual embeddings (e.g. `bge-m3`) without translation — produces inconsistent embedding quality across languages and complicates categorisation.
+
+---
+
+## ADR-019 · Processing Status Tracking
+
+**Decision**: Staging tables use a **`processing_status`** column (`new` → `processing` → `done` | `failed`) for row-level progress tracking. Downstream tasks filter on upstream `processing_status = 'done'`.
+
+**Rationale**:
+- Provides run-level isolation without partitioning by `run_id` — simpler schema.
+- If a workflow step fails and is retried, only unprocessed (`new`) or failed rows are picked up.
+- Failed rows are visible for debugging without blocking the pipeline.
+- Pattern is proven in chatbot message processing pipelines.
+
+**Rejected**: `run_id`-based partitioning — requires passing run context through all tasks and complicates cross-run queries (e.g. dedup needs to see all historical URLs, not just current run).
+
+---
+
 ## Summary
 
 | Layer | Tool | Cost |
 |---|---|---|
-| Search | `duckduckgo-search` | Free |
-| Scraping | `playwright` + `beautifulsoup4` | Free |
+| Search | `duckduckgo-search` (SerpAPI upgrade path) | Free |
+| Scraping | `requests` + `beautifulsoup4` | Free |
 | Geocoding | Nominatim / `geopy` | Free |
-| Language detection | `lingua-language-detector` | Free |
-| Orchestration | Databricks Workflows | Databricks-native |
-| Raw storage | Unity Catalog Volumes | Databricks-native |
+| Language targeting | Multilingual keyword generation (search-level) | Free |
+| Content translation | Databricks Foundation Model API | Databricks-native |
+| Artifact processing | `ai_parse_document` (Databricks-native) | Databricks-native |
+| Execution model | `.whl` entry points via `python_wheel_task` | — |
+| Orchestration | Databricks Workflows (sole orchestrator) | Databricks-native |
+| Deployment | Databricks Asset Bundles (DAB-native) | Databricks-native |
+| Raw storage | Unity Catalog Volumes (artifacts) | Databricks-native |
 | Structured storage | Delta Lake + Unity Catalog | Databricks-native |
 | Secret management | Databricks Secrets | Databricks-native |
-| Embeddings | Databricks Foundation Model API (BGE) | Free (workspace) |
-| Vector search | Databricks Vector Search | Databricks-native |
+| Embeddings | Databricks Foundation Model API (BGE-large-en) | Free (workspace) |
+| Vector search | Databricks Vector Search (Delta Sync) | Databricks-native |
 | RAG / Agents | Databricks Agent Framework + MLflow | Databricks-native |
 | LLM | Databricks Foundation Model API (Llama 3) | Free (workspace) |
 | NL interface | Databricks AI/BI Genie | Databricks-native |

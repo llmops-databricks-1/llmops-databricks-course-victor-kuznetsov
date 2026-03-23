@@ -40,18 +40,30 @@
 
 ---
 
+## Execution Model & Deployment
+
+| Choice | Detail |
+|---|---|
+| Execution model | `.whl` entry points via `python_wheel_task` — no notebooks for data processing |
+| Orchestration | Databricks Workflows is the **sole orchestrator** — no Python-level pipeline orchestration |
+| Deployment | Databricks Asset Bundles (DAB-native, no custom job parameters) |
+| Entry points | Each domain module has `main()` → declared in `[project.scripts]` → one Databricks Workflow task |
+
+---
+
 ## Databricks-Native Tools
 
 | Tool | Purpose |
 |---|---|
-| Databricks Workflows | Orchestration (scheduled + triggered) |
-| Delta Lake | Storage (Bronze / Silver / Gold medallion) |
+| Databricks Workflows | Orchestration (sole orchestrator, scheduled + triggered) |
+| Delta Lake | Storage (staging / bronze / gold tables) |
 | Unity Catalog | Governance, lineage, access control |
-| Vector Search | Semantic retrieval over embeddings |
-| Foundation Model API | Hosted LLM and embedding inference |
+| Unity Catalog Volumes | Unstructured artifact storage (PDFs, images) |
+| Vector Search | Semantic retrieval over embeddings (Delta Sync mode) |
+| Foundation Model API | Hosted LLM, embedding, and vision model inference |
 | Agent Framework | RAG agents (MLflow + LangGraph) |
 | AI/BI Genie | Conversational natural-language interface |
-| AI/BI Dashboards | Visual analytics |
+| AI/BI Dashboards | Visual analytics (including interactive radius filtering) |
 | Databricks Secrets | Secret management (`dbutils.secrets`) |
 
 ---
@@ -60,12 +72,12 @@
 
 | Tool | Purpose |
 |---|---|
-| `duckduckgo-search` | Web search (free, no API key) |
-| `playwright` | JS-rendered page scraping |
-| `beautifulsoup4` | Static HTML scraping |
-| `geopy` + Nominatim | Geocoding (free, no API key) |
-| `lingua-language-detector` | Language detection (EN/NL/DE/FR) |
-| `pydantic` | Data validation and serialization |
+| `duckduckgo-search` | Web search (free, no API key; SerpAPI upgrade path) |
+| `requests` + `beautifulsoup4` | Web page scraping |
+| `geopy` + Nominatim | Geocoding + country identification (free, no API key) |
+| `pydantic` | Data validation and serialization (v2, strict) |
+| `ai_parse_document` | PDF text extraction + image OCR (Databricks-native SQL function) |
+| Foundation Model API | Content translation, LLM categorisation, artifact summaries |
 
 ---
 
