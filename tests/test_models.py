@@ -1,6 +1,6 @@
 """Tests for ArtLake Pydantic data models."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -15,7 +15,6 @@ from artlake.models import (
     SeenUrl,
     SeenUrlStatus,
 )
-
 
 # ---------------------------------------------------------------------------
 # RawEvent
@@ -42,7 +41,7 @@ class TestRawEvent:
             snippet="Apply now",
             source="duckduckgo",
             raw_html="<html></html>",
-            scraped_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            scraped_at=datetime(2026, 1, 1, tzinfo=UTC),
             language="nl",
             artifact_urls=["https://example.com/file.pdf"],
             processing_status=ProcessingStatus.DONE,
@@ -103,8 +102,8 @@ class TestCleanEvent:
         event = CleanEvent(
             title="Art Market",
             description="Annual art market",
-            date_start=datetime(2026, 6, 1, tzinfo=timezone.utc),
-            date_end=datetime(2026, 6, 3, tzinfo=timezone.utc),
+            date_start=datetime(2026, 6, 1, tzinfo=UTC),
+            date_end=datetime(2026, 6, 3, tzinfo=UTC),
             location_text="Amsterdam",
             lat=52.3676,
             lng=4.9041,
@@ -211,7 +210,7 @@ class TestSeenUrl:
         seen = SeenUrl(
             url="https://example.com/event",
             fingerprint="abc123",
-            first_seen_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            first_seen_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
         assert seen.status == SeenUrlStatus.PENDING
 
@@ -220,7 +219,7 @@ class TestSeenUrl:
             seen = SeenUrl(
                 url="https://example.com/event",
                 fingerprint="abc123",
-                first_seen_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                first_seen_at=datetime(2026, 1, 1, tzinfo=UTC),
                 status=status,
             )
             assert seen.status == status
@@ -230,7 +229,7 @@ class TestSeenUrl:
             SeenUrl(
                 url="https://example.com/event",
                 fingerprint="abc123",
-                first_seen_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                first_seen_at=datetime(2026, 1, 1, tzinfo=UTC),
                 status="deleted",
             )
 
@@ -238,7 +237,7 @@ class TestSeenUrl:
         with pytest.raises(ValidationError):
             SeenUrl(
                 url="https://example.com/event",
-                first_seen_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                first_seen_at=datetime(2026, 1, 1, tzinfo=UTC),
             )
 
 
