@@ -18,12 +18,7 @@ dependencies = [
     "databricks-mcp==0.4.0",
     "backoff==2.2.1",
     "mlflow==3.8.1",
-    "nest-asyncio==1.6.0",
-    "arxiv==2.3.1",
-    "databricks-agents==1.8.2",
-    "psycopg==3.3.2",
-    "psycopg-pool==3.3.0",
-    "psycopg[binary]==3.3.2"
+    "databricks-agents==1.8.2"
 ]
 
 [project.optional-dependencies]
@@ -34,7 +29,8 @@ dev = ["databricks-connect>=17.0, <18",
        "claudetracing>=0.2.0, <1",]
 
 ci = ["pre-commit>=4.1.0, <5",
-      "pytest>=8.3.4, <9"]
+      "pytest>=8.3.4, <9",
+      "pytest-cov>=6.1.1, <7"]
 
 [tool.setuptools]
 include-package-data = true
@@ -54,9 +50,12 @@ include = ["llmops_databricks_course_victor_kuznetsov*"]
 version = { file = "version.txt" }
 
 [tool.pytest.ini_options]
-addopts = "-s --no-header --no-summary"
+addopts = "-s --no-header --no-summary --cov=llmops_databricks_course_victor_kuznetsov --cov-report=term-missing --cov-fail-under=80"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "integration: marks tests that require a live Databricks workspace (deselect with '-m \"not integration\"')",
+]
 
 [tool.ruff]
 line-length = 90
@@ -87,3 +86,12 @@ ignore = [
 
 [tool.ruff.format]
 indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+packages = ["llmops_databricks_course_victor_kuznetsov"]
+mypy_path = ["src"]

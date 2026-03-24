@@ -92,6 +92,9 @@ dmypy.json
 *.knit.md
 .Rproj.user
 
+# Databricks
+.databricks/
+
 # VS code configuration
 .vscode
 .history
