@@ -60,7 +60,7 @@ src/llmops_databricks_course_victor_kuznetsov/
 │   └── extract.py           #   ai_parse_document (Databricks native) + LLM summary → artlake-process-artifacts
 │
 ├── embed/                   # Semantic search preparation
-│   └── generate.py          #   Vector embedding generation (BGE)  → artlake-embed
+│   └── generate.py          #   Vector embedding generation (GTE)  → artlake-embed
 │
 └── storage/                 # Shared persistence utilities (not entry points)
     ├── delta.py             #   Delta table read/write helpers
@@ -116,7 +116,7 @@ artlake-translate → artlake-process-artifacts → artlake-categorise-rules →
 - `GoldEvent` — extends CleanEvent with category, artifact_summaries
 - `EventArtifact` — url, artifact_type (pdf/image), file_path, extracted_text, llm_summary
 - `SeenUrl` — url (full normalised URL as primary key), fingerprint, first_seen_at, status (accepted/filtered_country/duplicate)
-- `ArtLakeConfig` — target_countries, languages, categories, scrape_schedule
+- `ArtLakeConfig` — target_countries, languages, target_language (default: "en"), categories, scrape_schedule
 
 **Acceptance criteria:**
 - Pydantic v2 with strict validation
@@ -293,7 +293,7 @@ artlake-translate → artlake-process-artifacts → artlake-categorise-rules →
 - Write to `artlake.bronze.translated_events`
 - Skip events already in the target language (detected via query language tag)
 
-**Rationale:** Translating all content to one language eliminates the need for multilingual embeddings (BGE-large-en works well on English) and simplifies categorisation.
+**Rationale:** Translating all content to one language eliminates the need for multilingual embeddings (GTE-large-en works well on English) and simplifies categorisation.
 
 **Acceptance criteria:**
 - Supports EN, NL, DE, FR → configured target language
@@ -362,7 +362,7 @@ artlake-translate → artlake-process-artifacts → artlake-categorise-rules →
 
 **Behaviour:**
 - Read translated event descriptions
-- Generate embeddings via Foundation Model API (BGE-large-en — works because content is pre-translated)
+- Generate embeddings via Foundation Model API (GTE-large-en — works because content is pre-translated)
 - Store in `artlake.gold.embeddings`
 
 **Acceptance criteria:**

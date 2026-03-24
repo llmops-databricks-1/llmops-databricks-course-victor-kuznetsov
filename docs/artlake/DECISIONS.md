@@ -76,14 +76,18 @@ Proceed to next option only if previous step's output quality is demonstrably wo
 
 ## ADR-005 · Embeddings
 
-**Decision**: Use **Databricks Foundation Model API** (BGE-large-en-v1.5 or `databricks-bge-large-en`) hosted on the workspace, applied to **pre-translated** (English) content.
+**Decision**: Use **Databricks Foundation Model API** (`databricks-gte-large-en`) hosted on the workspace, applied to **pre-translated** (English) content.
 
 **Rationale**:
-- Included in Databricks workspace — no additional cost.
+- Included in Databricks workspace — free, no additional cost.
+- Fastest embedding model available on Databricks (recommended by course reference material).
 - Databricks-native: integrates directly with Vector Search and Agent Framework.
-- BGE-large-en is an English-focused model. Content is pre-translated to the configured language (default: English) via ADR-018, so monolingual embeddings work well.
+- 1024 dimensions, 512 max tokens — suitable for event descriptions.
+- Content is pre-translated to the configured language (default: English) via ADR-018, so monolingual embeddings work well.
 
-**Upgrade path**: OpenAI `text-embedding-3-small` if embedding quality proves insufficient (cost: ~$0.02/1M tokens).
+**Alternative**: `databricks-bge-large-en` — higher quality but slower. Switch if GTE retrieval quality proves insufficient.
+
+**Upgrade path**: OpenAI `text-embedding-3-small` if Databricks-native models prove insufficient (cost: ~$0.02/1M tokens).
 
 **Rejected**: Using a multilingual embedding model (e.g. `bge-m3`, `multilingual-e5-large`) — adds complexity. Translating content first and using a strong monolingual model is simpler and produces more consistent embeddings.
 
@@ -279,7 +283,7 @@ Proceed to next option only if previous step's output quality is demonstrably wo
 | Raw storage | Unity Catalog Volumes (artifacts) | Databricks-native |
 | Structured storage | Delta Lake + Unity Catalog | Databricks-native |
 | Secret management | Databricks Secrets | Databricks-native |
-| Embeddings | Databricks Foundation Model API (BGE-large-en) | Free (workspace) |
+| Embeddings | Databricks Foundation Model API (GTE-large-en) | Free (workspace) |
 | Vector search | Databricks Vector Search (Delta Sync) | Databricks-native |
 | RAG / Agents | Databricks Agent Framework + MLflow | Databricks-native |
 | LLM | Databricks Foundation Model API (Llama 3) | Free (workspace) |

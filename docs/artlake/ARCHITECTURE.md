@@ -35,7 +35,7 @@ flowchart TD
         TRANS["Content Translation\n(Foundation Model API → configured language)"]
         ART_PROC["Artifact Processing\n(ai_parse_document · LLM summary)"]
         CAT["Categorise Events\n(rules-based · LLM upgrade)"]
-        EMB["Embedding Generation\n(Databricks BGE-large-en)"]
+        EMB["Embedding Generation\n(Databricks GTE-large-en)"]
     end
 
     subgraph AI["AI / RAG Layer"]
@@ -106,11 +106,11 @@ Orchestrated as **Databricks Workflows** with `python_wheel_task` entry points.
 - **Event Categorisation** — two approaches, same input/output contract:
   - Rule-based (`artlake-categorise-rules`) — keyword matching on translated content (MVP)
   - LLM-based (`artlake-categorise-llm`) — Foundation Model API classification (upgrade, drop-in replacement)
-- **Embedding Generation** (`artlake-embed`) — BGE-large-en via Databricks Foundation Model API. Works well because content is pre-translated to English. Stored in Delta for Vector Search sync.
+- **Embedding Generation** (`artlake-embed`) — GTE-large-en via Databricks Foundation Model API. Works well because content is pre-translated to English. Stored in Delta for Vector Search sync.
 
 ### AI / RAG Layer
 
-- **Embedding model** — Databricks Foundation Model API (BGE-large-en) applied to translated event descriptions (ADR-005).
+- **Embedding model** — Databricks Foundation Model API (GTE-large-en) applied to translated event descriptions (ADR-005).
 - **Vector Search** — Databricks Vector Search with Delta Sync index over embeddings, enabling semantic retrieval (ADR-006).
 - **RAG pipeline** — retrieves relevant events and feeds them as context into a Databricks AI agent *(Phase 3)*.
 - **Databricks Agent** — reasons over retrieved context to answer natural-language questions *(Phase 3)* such as:
@@ -171,7 +171,7 @@ config = ArtLakeConfig(
 | Artifact processing | `ai_parse_document` (Databricks-native SQL function for PDF + image) |
 | Storage | Delta Lake + Unity Catalog (structured), UC Volumes (artifacts) |
 | Content translation | Databricks Foundation Model API (LLM) — translate to configured language |
-| Embeddings | Databricks Foundation Model API (BGE-large-en, on pre-translated content) |
+| Embeddings | Databricks Foundation Model API (GTE-large-en, on pre-translated content) |
 | Vector search | Databricks Vector Search (Delta Sync) |
 | LLM | Databricks Foundation Model API (categorisation, artifact summaries) |
 | RAG / Agents | Databricks Agent Framework + MLflow + LangGraph *(Phase 3)* |
