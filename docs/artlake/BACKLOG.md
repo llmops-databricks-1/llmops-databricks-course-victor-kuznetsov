@@ -28,7 +28,7 @@ ArtLake has architecture docs, ADRs, repo standards, CI, and tooling in place �
 Each module has a `main()` → `[project.scripts]` entry point → `python_wheel_task`.
 
 ```
-src/llmops_databricks_course_victor_kuznetsov/
+src/artlake/
 ├── models/                  # Data contracts (Pydantic v2)
 │   ├── event.py             #   RawEvent, CleanEvent, GoldEvent, EventArtifact, SeenUrl
 │   └── config.py            #   ArtLakeConfig

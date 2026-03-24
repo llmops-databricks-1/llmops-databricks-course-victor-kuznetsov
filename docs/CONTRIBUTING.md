@@ -39,7 +39,7 @@ uv run mypy src/
 uv run pytest
 
 # Run with coverage report
-uv run pytest --cov=llmops_databricks_course_victor_kuznetsov --cov-report=term-missing
+uv run pytest --cov=artlake --cov-report=term-missing
 
 # Run integration tests (requires Databricks workspace)
 uv run pytest -m integration

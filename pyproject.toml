@@ -36,7 +36,7 @@ ci = ["pre-commit>=4.1.0, <5",
 include-package-data = true
 
 [tool.setuptools.package-data]
-"llmops_databricks_course_victor_kuznetsov" = ["../../../project_config.yml"]
+"artlake" = ["../../../project_config.yml"]
 
 [build-system]
 requires = ["setuptools>=72.0"]
@@ -44,13 +44,13 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["llmops_databricks_course_victor_kuznetsov*"]
+include = ["artlake*"]
 
 [tool.setuptools.dynamic]
 version = { file = "version.txt" }
 
 [tool.pytest.ini_options]
-addopts = "-s --no-header --no-summary --cov=llmops_databricks_course_victor_kuznetsov --cov-report=term-missing --cov-fail-under=80"
+addopts = "-s --no-header --no-summary --cov=artlake --cov-report=term-missing --cov-fail-under=80"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
@@ -93,5 +93,5 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
-packages = ["llmops_databricks_course_victor_kuznetsov"]
+packages = ["artlake"]
 mypy_path = ["src"]

@@ -1,0 +1,104 @@
+"""Event and artifact data models."""
+
+from datetime import datetime
+from enum import StrEnum
+
+from pydantic import BaseModel, ConfigDict, HttpUrl
+
+
+class ProcessingStatus(StrEnum):
+    """Row-level processing status for staging models."""
+
+    NEW = "new"
+    PROCESSING = "processing"
+    DONE = "done"
+    FAILED = "failed"
+
+
+class SeenUrlStatus(StrEnum):
+    """Status of a seen URL in the dedup tracker."""
+
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    FILTERED_COUNTRY = "filtered_country"
+    DUPLICATE = "duplicate"
+
+
+class RawEvent(BaseModel):
+    """Raw search result written to staging.search_results."""
+
+    model_config = ConfigDict(strict=True)
+
+    url: HttpUrl
+    title: str
+    snippet: str
+    source: str
+    raw_html: str | None = None
+    scraped_at: datetime | None = None
+    language: str
+    artifact_urls: list[str] = []
+    processing_status: ProcessingStatus = ProcessingStatus.NEW
+
+
+class CleanEvent(BaseModel):
+    """Structured event written to bronze.raw_events."""
+
+    model_config = ConfigDict(strict=True)
+
+    title: str
+    description: str
+    date_start: datetime | None = None
+    date_end: datetime | None = None
+    location_text: str
+    lat: float | None = None
+    lng: float | None = None
+    country: str | None = None
+    language: str
+    source: str
+    url: HttpUrl
+    artifact_paths: list[str] = []
+
+
+class GoldEvent(BaseModel):
+    """Enriched event written to gold.events."""
+
+    model_config = ConfigDict(strict=True)
+
+    title: str
+    description: str
+    date_start: datetime | None = None
+    date_end: datetime | None = None
+    location_text: str
+    lat: float | None = None
+    lng: float | None = None
+    country: str | None = None
+    language: str
+    source: str
+    url: HttpUrl
+    artifact_paths: list[str] = []
+    category: str
+    artifact_summaries: list[str] = []
+
+
+class EventArtifact(BaseModel):
+    """Artifact metadata written to staging.artifacts."""
+
+    model_config = ConfigDict(strict=True)
+
+    url: HttpUrl
+    artifact_type: str
+    file_path: str | None = None
+    extracted_text: str | None = None
+    llm_summary: str | None = None
+    processing_status: ProcessingStatus = ProcessingStatus.NEW
+
+
+class SeenUrl(BaseModel):
+    """Dedup tracker written to staging.seen_urls."""
+
+    model_config = ConfigDict(strict=True)
+
+    url: HttpUrl
+    fingerprint: str
+    first_seen_at: datetime
+    status: SeenUrlStatus = SeenUrlStatus.PENDING
