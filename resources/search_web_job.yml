@@ -1,0 +1,29 @@
+resources:
+  jobs:
+    search_web_job:
+      name: search-web
+      tags:
+        project_name: "llmops-databricks-course-victor-kuznetsov"
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/*.whl
+
+      tasks:
+        - task_key: search_web
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-search
+            package_name: artlake
+            parameters:
+              - "--queries"
+              - "${var.config_root}/config/output/queries.yml"
+              - "--table"
+              - "artlake.staging.search_results"
+              - "--max-results"
+              - "10"
+              - "--env"
+              - "${bundle.target}"

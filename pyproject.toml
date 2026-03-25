@@ -20,12 +20,14 @@ dependencies = [
     "mlflow==3.8.1",
     "databricks-agents==1.8.2",
     "pyyaml==6.0.3",
-    "typer==0.24.1"
+    "typer==0.24.1",
+    "ddgs==9.11.4"
 ]
 
 [project.scripts]
 artlake = "artlake.cli:main"
 artlake-generate-queries = "artlake.search.generate:main"
+artlake-search = "artlake.search.web:main"
 
 [project.optional-dependencies]
 dev = ["databricks-connect>=17.0, <18",
@@ -106,5 +108,10 @@ module = [
     "backoff",
     "databricks.sdk",
     "databricks.sdk.*",
+    "ddgs",
+    "ddgs.*",
+    "pandas",
+    "pyspark",
+    "pyspark.*",
 ]
 ignore_missing_imports = true

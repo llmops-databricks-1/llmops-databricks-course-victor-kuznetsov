@@ -73,7 +73,8 @@ flowchart TD
 
 Orchestrated as **Databricks Workflows**. Each step is a `.whl` entry point executed via `python_wheel_task` — no notebooks, no Python-level orchestration (ADR-012, ADR-017).
 
-- **Search** (`artlake-search`, `artlake-search-social`) — multilingual keyword queries generated from base English keywords translated to NL/DE/FR. Results tagged with query language. Country names included in queries.
+- **Query generation** (`artlake-generate-queries`) — translates base English keywords to NL/DE/FR via LLM; writes `queries.yml` (bundled with DAB artifacts) with one query per language × category × country. Runs once before search; re-run only when keywords change.
+- **Search** (`artlake-search`, `artlake-search-social`) — reads pre-generated `queries.yml` and executes each query via `duckduckgo-search`. Results tagged with query language. Country names already included in queries (from generation step).
 - **Dedup + Seen-URL Tracking** (`artlake-dedup`) — fingerprints each URL (full normalised URL as primary key, title as secondary signal). Stores ALL evaluated URLs in `artlake.staging.seen_urls` (accepted + filtered) to avoid re-scraping across runs. Supports art aggregator sites where the domain is the same but event paths differ.
 - **Page Scraper** (`artlake-scrape-pages`) — `requests` + BeautifulSoup for HTML content extraction. Detects PDF/image links (open call rules, posters, flyers). Upgrade path: SerpAPI (paid) when JS-rendered pages or richer content extraction is needed.
 - **Artifact Downloader** (`artlake-download-artifacts`) — downloads detected PDFs and images to Unity Catalog Volumes.

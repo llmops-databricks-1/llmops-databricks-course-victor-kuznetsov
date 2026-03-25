@@ -53,7 +53,6 @@ resources:
             notebook_path: <notebook_path>
             base_parameters:
               env: ${bundle.target}
-              git_sha: "${var.git_sha}"
               run_id: "{{job.run_id}}"
 ```
 
@@ -61,15 +60,6 @@ Where:
 - `<resource_key>` = the derived key (e.g. `basic_catalog_job`)
 - `<job_display_name>` = kebab-case version of the notebook name (e.g. `basic-catalog`)
 - `<notebook_path>` = the notebook path as given by the user (e.g. `examples/01_quickstart/basic_catalog.py`)
-
-Also add the `git_sha` variable definition to `databricks.yml` if it is not already present:
-
-```yaml
-variables:
-  git_sha:
-    description: "Git SHA of the deployed commit"
-    default: "local"
-```
 
 ### 5. Build the wheel and deploy the bundle
 
