@@ -8,7 +8,6 @@ from artlake.models.event import (
     ProcessingStatus,
     RawEvent,
     SeenUrl,
-    SeenUrlStatus,
 )
 
 __all__ = [
@@ -19,5 +18,4 @@ __all__ = [
     "ProcessingStatus",
     "RawEvent",
     "SeenUrl",
-    "SeenUrlStatus",
 ]

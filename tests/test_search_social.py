@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from artlake.models.event import ProcessingStatus, RawEvent
+from artlake.models.event import RawEvent
 from artlake.search.models import SearchQuery
 from artlake.search.social import (
     _build_social_queries,
@@ -122,7 +122,6 @@ class TestMakeEvent:
         assert str(event.url) == "https://www.facebook.com/events/123456789"
         assert event.source == "facebook"
         assert event.language == "nl"
-        assert event.processing_status == ProcessingStatus.NEW
 
     def test_source_reflects_platform(self) -> None:
         for source in ("facebook", "instagram", "linkedin"):

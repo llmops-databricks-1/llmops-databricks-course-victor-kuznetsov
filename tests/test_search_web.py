@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from artlake.models.event import ProcessingStatus, RawEvent
+from artlake.models.event import RawEvent
 from artlake.search.models import SearchQuery
 from artlake.search.web import _make_event, search_web
 
@@ -49,7 +49,6 @@ class TestMakeEvent:
         assert event.snippet == _DDG_RESULT["body"]
         assert event.language == "nl"
         assert event.source == "duckduckgo"
-        assert event.processing_status == ProcessingStatus.NEW
 
     def test_missing_href_returns_none(self) -> None:
         result = {"title": "Some Title", "body": "Some body"}
@@ -213,7 +212,6 @@ class TestWriteResults:
             snippet="A snippet.",
             source="duckduckgo",
             language="nl",
-            processing_status=ProcessingStatus.NEW,
         )
 
         mock_spark = MagicMock()

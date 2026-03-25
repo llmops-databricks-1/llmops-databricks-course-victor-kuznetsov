@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
+from pydantic import HttpUrl, ValidationError
 
 from artlake.models import (
     ArtLakeConfig,
@@ -13,7 +13,6 @@ from artlake.models import (
     ProcessingStatus,
     RawEvent,
     SeenUrl,
-    SeenUrlStatus,
 )
 
 # ---------------------------------------------------------------------------
@@ -30,7 +29,6 @@ class TestRawEvent:
             source="duckduckgo",
             language="en",
         )
-        assert event.processing_status == ProcessingStatus.NEW
         assert event.artifact_urls == []
         assert event.raw_html is None
 
@@ -44,9 +42,7 @@ class TestRawEvent:
             scraped_at=datetime(2026, 1, 1, tzinfo=UTC),
             language="nl",
             artifact_urls=["https://example.com/file.pdf"],
-            processing_status=ProcessingStatus.DONE,
         )
-        assert event.processing_status == ProcessingStatus.DONE
         assert len(event.artifact_urls) == 1
 
     def test_invalid_url(self) -> None:
@@ -65,17 +61,6 @@ class TestRawEvent:
                 url="https://example.com/event",
                 title="Open Call",
                 # missing snippet, source, language
-            )
-
-    def test_invalid_processing_status(self) -> None:
-        with pytest.raises(ValidationError):
-            RawEvent(
-                url="https://example.com/event",
-                title="Open Call",
-                snippet="Apply now",
-                source="duckduckgo",
-                language="en",
-                processing_status="invalid",
             )
 
 
@@ -209,35 +194,29 @@ class TestSeenUrl:
     def test_valid(self) -> None:
         seen = SeenUrl(
             url="https://example.com/event",
+            title="Open Call",
+            source="duckduckgo",
             fingerprint="abc123",
-            first_seen_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        assert seen.status == SeenUrlStatus.PENDING
+        assert seen.url == HttpUrl("https://example.com/event")
+        assert seen.ingested_at is not None
 
-    def test_all_statuses(self) -> None:
-        for status in SeenUrlStatus:
-            seen = SeenUrl(
-                url="https://example.com/event",
-                fingerprint="abc123",
-                first_seen_at=datetime(2026, 1, 1, tzinfo=UTC),
-                status=status,
-            )
-            assert seen.status == status
-
-    def test_invalid_status(self) -> None:
-        with pytest.raises(ValidationError):
-            SeenUrl(
-                url="https://example.com/event",
-                fingerprint="abc123",
-                first_seen_at=datetime(2026, 1, 1, tzinfo=UTC),
-                status="deleted",
-            )
+    def test_with_explicit_timestamp(self) -> None:
+        seen = SeenUrl(
+            url="https://example.com/event",
+            title="Open Call",
+            source="duckduckgo",
+            fingerprint="abc123",
+            ingested_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        assert seen.ingested_at == datetime(2026, 1, 1, tzinfo=UTC)
 
     def test_missing_fingerprint(self) -> None:
         with pytest.raises(ValidationError):
             SeenUrl(
                 url="https://example.com/event",
-                first_seen_at=datetime(2026, 1, 1, tzinfo=UTC),
+                title="Open Call",
+                source="duckduckgo",
             )
 
 
