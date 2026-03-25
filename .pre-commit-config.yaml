@@ -26,5 +26,11 @@ repos:
     hooks:
       - id: mypy
         args: [--config-file=pyproject.toml]
-        additional_dependencies: [pydantic>=2.11.7]
+        additional_dependencies:
+          - pydantic>=2.11.7
+          - types-PyYAML>=6.0.12
+          - openai>=2.8.0
+          - loguru>=0.7.3
+          - backoff>=2.2.1
+          - typer>=0.24.1
         pass_filenames: false

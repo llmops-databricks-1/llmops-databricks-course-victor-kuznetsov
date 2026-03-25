@@ -1,0 +1,30 @@
+keywords:
+  - art exhibition
+  - open call artists
+  - art residency
+  - art workshop
+  - art fair
+  - contemporary art event
+  - art grant
+  - painting exhibition
+  - art festival
+  - art market
+  - art biennale
+  - street art festival
+
+countries:
+  - code: BE
+    name: Belgium
+    languages: [nl, fr]
+  - code: NL
+    name: Netherlands
+    languages: [nl]
+  - code: DE
+    name: Germany
+    languages: [de]
+  - code: FR
+    name: France
+    languages: [fr]
+  - code: LU
+    name: Luxembourg
+    languages: [fr, de]

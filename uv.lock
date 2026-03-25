@@ -113,6 +113,73 @@ wheels = [
 ]
 
 [[package]]
+name = "artlake"
+source = { editable = "." }
+dependencies = [
+    { name = "backoff" },
+    { name = "cffi" },
+    { name = "cloudpickle" },
+    { name = "databricks-agents" },
+    { name = "databricks-mcp" },
+    { name = "databricks-sdk" },
+    { name = "databricks-vectorsearch" },
+    { name = "loguru" },
+    { name = "mlflow" },
+    { name = "numpy" },
+    { name = "openai" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "typer" },
+]
+
+[package.optional-dependencies]
+ci = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+]
+dev = [
+    { name = "claudetracing" },
+    { name = "databricks-connect" },
+    { name = "ipykernel" },
+    { name = "pip" },
+    { name = "pre-commit" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "backoff", specifier = "==2.2.1" },
+    { name = "cffi", specifier = "==1.17.1" },
+    { name = "claudetracing", marker = "extra == 'dev'", specifier = ">=0.2.0,<1" },
+    { name = "cloudpickle", specifier = "==3.1.1" },
+    { name = "databricks-agents", specifier = "==1.8.2" },
+    { name = "databricks-connect", marker = "extra == 'dev'", specifier = ">=17.0,<18" },
+    { name = "databricks-mcp", specifier = "==0.4.0" },
+    { name = "databricks-sdk", specifier = "==0.85.0" },
+    { name = "databricks-vectorsearch", specifier = "==0.63" },
+    { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=6.29.5,<7" },
+    { name = "loguru", specifier = "==0.7.3" },
+    { name = "mlflow", specifier = "==3.8.1" },
+    { name = "numpy", specifier = "==2.4.0" },
+    { name = "openai", specifier = "==2.8.0" },
+    { name = "pandas", specifier = "==2.3.0" },
+    { name = "pip", marker = "extra == 'dev'", specifier = ">=25.0.1,<26" },
+    { name = "pre-commit", marker = "extra == 'ci'", specifier = ">=4.1.0,<5" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.1.0,<5" },
+    { name = "pyarrow", specifier = "==22.0.0" },
+    { name = "pydantic", specifier = "==2.11.7" },
+    { name = "pytest", marker = "extra == 'ci'", specifier = ">=8.3.4,<9" },
+    { name = "pytest-cov", marker = "extra == 'ci'", specifier = ">=6.1.1,<7" },
+    { name = "python-dotenv", specifier = "==1.1.1" },
+    { name = "pyyaml", specifier = "==6.0.3" },
+    { name = "typer", specifier = "==0.24.1" },
+]
+provides-extras = ["dev", "ci"]
+
+[[package]]
 name = "asttokens"
 version = "3.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1421,69 +1488,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/d2/d8/08615bc4811d9a6df
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5d/b2/f21db9636d9fcd67b2c557c58aafb8a6e9b53864f7a40d645e09c2e3ab98/litellm-1.75.9-py3-none-any.whl", hash = "sha256:a72c3e05bcb0e50ac1804f0df09d0d7bf5cb41e84351e1609a960033b0ef01c1", size = 8920144, upload-time = "2025-08-20T17:43:48.327Z" },
 ]
-
-[[package]]
-name = "llmops-databricks-course-victor-kuznetsov"
-source = { editable = "." }
-dependencies = [
-    { name = "backoff" },
-    { name = "cffi" },
-    { name = "cloudpickle" },
-    { name = "databricks-agents" },
-    { name = "databricks-mcp" },
-    { name = "databricks-sdk" },
-    { name = "databricks-vectorsearch" },
-    { name = "loguru" },
-    { name = "mlflow" },
-    { name = "numpy" },
-    { name = "openai" },
-    { name = "pandas" },
-    { name = "pyarrow" },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-]
-
-[package.optional-dependencies]
-ci = [
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-]
-dev = [
-    { name = "claudetracing" },
-    { name = "databricks-connect" },
-    { name = "ipykernel" },
-    { name = "pip" },
-    { name = "pre-commit" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "backoff", specifier = "==2.2.1" },
-    { name = "cffi", specifier = "==1.17.1" },
-    { name = "claudetracing", marker = "extra == 'dev'", specifier = ">=0.2.0,<1" },
-    { name = "cloudpickle", specifier = "==3.1.1" },
-    { name = "databricks-agents", specifier = "==1.8.2" },
-    { name = "databricks-connect", marker = "extra == 'dev'", specifier = ">=17.0,<18" },
-    { name = "databricks-mcp", specifier = "==0.4.0" },
-    { name = "databricks-sdk", specifier = "==0.85.0" },
-    { name = "databricks-vectorsearch", specifier = "==0.63" },
-    { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=6.29.5,<7" },
-    { name = "loguru", specifier = "==0.7.3" },
-    { name = "mlflow", specifier = "==3.8.1" },
-    { name = "numpy", specifier = "==2.4.0" },
-    { name = "openai", specifier = "==2.8.0" },
-    { name = "pandas", specifier = "==2.3.0" },
-    { name = "pip", marker = "extra == 'dev'", specifier = ">=25.0.1,<26" },
-    { name = "pre-commit", marker = "extra == 'ci'", specifier = ">=4.1.0,<5" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.1.0,<5" },
-    { name = "pyarrow", specifier = "==22.0.0" },
-    { name = "pydantic", specifier = "==2.11.7" },
-    { name = "pytest", marker = "extra == 'ci'", specifier = ">=8.3.4,<9" },
-    { name = "pytest-cov", marker = "extra == 'ci'", specifier = ">=6.1.1,<7" },
-    { name = "python-dotenv", specifier = "==1.1.1" },
-]
-provides-extras = ["dev", "ci"]
 
 [[package]]
 name = "loguru"

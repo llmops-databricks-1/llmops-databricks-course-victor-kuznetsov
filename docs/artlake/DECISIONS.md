@@ -267,6 +267,47 @@ Proceed to next option only if previous step's output quality is demonstrably wo
 
 ---
 
+## ADR-020 · Configuration & Mapping File Format
+
+**Decision**: Use **YAML** as the standard format for all configuration files, lookup tables, generated translation files, and admin-editable system data.
+
+**Rationale**:
+- Human-readable and easy to hand-edit — critical for admin-adjustable files (e.g. translated keyword sets).
+- Supports comments, useful for documenting manual overrides or annotations.
+- Consistent with existing project conventions (`databricks.yml`, resource definitions).
+- JSON reserved for machine-to-machine data only (API payloads, serialized outputs).
+
+**Rejected**: JSON for config files — no comment support, harder to review diffs on nested structures.
+
+---
+
+## ADR-021 · LLM Integration Pattern
+
+**Decision**: All LLM calls use the **OpenAI Python SDK** pointed at **Databricks Foundation Model serving endpoints** (pay-per-token). Default model: `databricks-llama-4-maverick`.
+
+**Rationale**:
+- Zero secrets management — authentication via `WorkspaceClient` workspace token.
+- Databricks-native: no external network dependency, data stays within the workspace.
+- OpenAI SDK is the standard interface — trivial to swap models later (including external models via Databricks gateway).
+- Pay-per-token pricing is negligible for batch/one-off tasks (keyword translation, content summarisation).
+- Same pattern as the course reference repository (`course-code-hub`).
+
+**Integration pattern**:
+```python
+from databricks.sdk import WorkspaceClient
+from openai import OpenAI
+
+w = WorkspaceClient()
+client = OpenAI(
+    api_key=w.tokens.create(lifetime_seconds=1200).token_value,
+    base_url=f"{w.config.host.rstrip('/')}/serving-endpoints",
+)
+```
+
+**Upgrade path**: Create an "External Model" serving endpoint to proxy OpenAI GPT-4o or Anthropic Claude if Foundation Model quality proves insufficient for a specific task.
+
+---
+
 ## Summary
 
 | Layer | Tool | Cost |
@@ -287,5 +328,7 @@ Proceed to next option only if previous step's output quality is demonstrably wo
 | Vector search | Databricks Vector Search (Delta Sync) | Databricks-native |
 | RAG / Agents | Databricks Agent Framework + MLflow | Databricks-native |
 | LLM | Databricks Foundation Model API (Llama 3) | Free (workspace) |
+| LLM integration | OpenAI SDK → Databricks serving endpoints | Databricks-native |
+| Config format | YAML for all configs, mappings, system data | — |
 | NL interface | Databricks AI/BI Genie | Databricks-native |
 | Dashboards | Databricks AI/BI Dashboards | Databricks-native |
