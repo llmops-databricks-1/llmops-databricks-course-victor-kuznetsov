@@ -240,9 +240,9 @@ class TestWriteResults:
             write_results([event], "artlake.staging.search_results")
 
         mock_spark.createDataFrame.assert_called_once()
-        mock_df.write.format("delta").mode("append").saveAsTable.assert_called_once_with(
-            "artlake.staging.search_results"
-        )
+        mock_df.write.format("delta").mode("append").option(
+            "mergeSchema", "true"
+        ).saveAsTable.assert_called_once_with("artlake.staging.search_results")
 
     def test_empty_events_skips_write(self) -> None:
         import sys
