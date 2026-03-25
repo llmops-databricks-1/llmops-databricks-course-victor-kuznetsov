@@ -1,9 +1,9 @@
 resources:
   jobs:
-    search_web_job:
-      name: search-web
+    search_social_job:
+      name: search-social
       tags:
-        project_name: "llmops-databricks-course-victor-kuznetsov"
+        project_name: "artlake"
 
       environments:
         - environment_key: default
@@ -13,19 +13,21 @@ resources:
               - ../dist/*.whl
 
       tasks:
-        - task_key: search_web
+        - task_key: search_social
           environment_key: default
           python_wheel_task:
-            entry_point: artlake-search
+            entry_point: artlake-search-social
             package_name: artlake
             parameters:
               - "--queries"
               - "${var.config_root}/config/output/queries.yml"
+              - "--platforms"
+              - "${var.config_root}/config/input/social_platforms.yml"
               - "--table"
               - "artlake.staging.search_results"
               - "--max-results"
-              - "10"
+              - "5"
               - "--batch-size"
-              - "10"
+              - "5"
               - "--env"
               - "${bundle.target}"
