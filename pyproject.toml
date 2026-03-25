@@ -1,7 +1,7 @@
 [project]
-name = "llmops-databricks-course-victor-kuznetsov"
+name = "artlake"
 dynamic = ["version"]
-description = "llmops-databricks-course-victor-kuznetsov - LLMOps Course on Databricks"
+description = "ArtLake — automated art event discovery for professional artists"
 requires-python = ">=3.12, <3.13"
 dependencies = [
     "cffi==1.17.1",
@@ -18,8 +18,14 @@ dependencies = [
     "databricks-mcp==0.4.0",
     "backoff==2.2.1",
     "mlflow==3.8.1",
-    "databricks-agents==1.8.2"
+    "databricks-agents==1.8.2",
+    "pyyaml==6.0.3",
+    "typer==0.24.1"
 ]
+
+[project.scripts]
+artlake = "artlake.cli:main"
+artlake-generate-queries = "artlake.search.generate:main"
 
 [project.optional-dependencies]
 dev = ["databricks-connect>=17.0, <18",
@@ -94,3 +100,11 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 packages = ["artlake"]
 mypy_path = ["src"]
+
+[[tool.mypy.overrides]]
+module = [
+    "backoff",
+    "databricks.sdk",
+    "databricks.sdk.*",
+]
+ignore_missing_imports = true

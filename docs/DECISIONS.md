@@ -60,7 +60,7 @@
 | Unity Catalog | Governance, lineage, access control |
 | Unity Catalog Volumes | Unstructured artifact storage (PDFs, images) |
 | Vector Search | Semantic retrieval over embeddings (Delta Sync mode) |
-| Foundation Model API | Hosted LLM, embedding, and vision model inference |
+| Foundation Model API | Hosted LLM, embedding, and vision model inference (via OpenAI SDK) |
 | Agent Framework | RAG agents (MLflow + LangGraph) |
 | AI/BI Genie | Conversational natural-language interface |
 | AI/BI Dashboards | Visual analytics (including interactive radius filtering) |
@@ -78,6 +78,15 @@
 | `pydantic` | Data validation and serialization (v2, strict) |
 | `ai_parse_document` | PDF text extraction + image OCR (Databricks-native SQL function) |
 | Foundation Model API | Content translation, LLM categorisation, artifact summaries |
+
+---
+
+## Configuration Files
+
+| Choice | Detail |
+|---|---|
+| Format | YAML for all configs, mappings, and admin-editable system data |
+| JSON | Reserved for machine-to-machine data only (API payloads, serialized outputs) |
 
 ---
 

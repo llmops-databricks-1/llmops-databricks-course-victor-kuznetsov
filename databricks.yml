@@ -1,13 +1,13 @@
 bundle:
-  name: llmops-databricks-course-victor-kuznetsov
+  name: artlake
 
 include:
   - resources/*.yml
 
 variables:
-  git_sha:
-    description: "Git SHA of the deployed commit"
-    default: "local"
+  config_root:
+    description: "Root path for config files (input keywords, output queries)"
+    default: "/Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}/files"
 
 artifacts:
   default:
