@@ -29,6 +29,7 @@ artlake = "artlake.cli:main"
 artlake-generate-queries = "artlake.search.generate:main"
 artlake-search = "artlake.search.web:main"
 artlake-search-social = "artlake.search.social:main"
+artlake-dedup = "artlake.filter.dedup:main"
 
 [project.optional-dependencies]
 dev = ["databricks-connect>=17.0, <18",

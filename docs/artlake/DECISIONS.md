@@ -188,13 +188,13 @@ Proceed to next option only if previous step's output quality is demonstrably wo
 
 ## ADR-014 · Seen-URL Tracking
 
-**Decision**: Maintain a persistent `artlake.staging.seen_urls` Delta table that stores **all** evaluated URLs — both accepted and filtered out — across pipeline runs.
+**Decision**: Maintain a persistent `artlake.staging.seen_urls` Delta table as a set of fingerprinted URLs across pipeline runs. Fingerprint is `sha2(url, 256)`. Dedup uses a Spark anti-join — no URL normalization, no status column.
 
 **Rationale**:
-- Prevents re-scraping URLs that were already evaluated and rejected (e.g., wrong country).
-- Fingerprint is the **full normalised URL** (not domain), supporting art aggregators where the domain is the same but event paths differ.
-- Title is a secondary signal for cross-site near-duplicate detection.
-- Status tracking (pending → accepted / filtered_country / duplicate) provides pipeline observability.
+- Prevents re-scraping URLs already evaluated in previous runs.
+- `sha2(url, 256)` is a native Spark function — no UDF, no normalization overhead. DuckDuckGo returns canonical URLs so exact hash match covers all real duplicates.
+- `seen_urls` is a pure set (presence = seen). Status tracking was dropped — it created a second source of truth that overlapped with downstream `processing_status` columns and added complexity without clear benefit at the dedup step.
+- Title and source stored alongside the URL for future observability and potential near-dedup signal.
 
 ---
 
@@ -255,7 +255,7 @@ Proceed to next option only if previous step's output quality is demonstrably wo
 
 ## ADR-019 · Processing Status Tracking
 
-**Decision**: Staging tables use a **`processing_status`** column (`new` → `processing` → `done` | `failed`) for row-level progress tracking. Downstream tasks filter on upstream `processing_status = 'done'`.
+**Decision**: Staging tables for expensive operations (`scraped_pages`, `artifacts`) use a **`processing_status`** column (`new` → `processing` → `done` | `failed`) for row-level progress tracking. Downstream tasks filter on upstream `processing_status = 'done'`. Not used on `search_results` or `seen_urls` — those use simpler coordination (anti-join on `seen_urls`, presence in `scraped_pages`).
 
 **Rationale**:
 - Provides run-level isolation without partitioning by `run_id` — simpler schema.

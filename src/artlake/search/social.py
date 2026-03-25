@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import yaml
 from loguru import logger
 
-from artlake.models.event import ProcessingStatus, RawEvent
+from artlake.models.event import RawEvent
 from artlake.search.load import load_queries
 from artlake.search.models import SearchQuery
 from artlake.search.web import write_results
@@ -69,7 +69,6 @@ def _make_event(result: dict[str, str], language: str, source: str) -> RawEvent 
             snippet=snippet,
             source=source,
             language=language,
-            processing_status=ProcessingStatus.NEW,
         )
     except Exception:
         logger.warning("Skipping result with invalid URL: {}", url[:120])

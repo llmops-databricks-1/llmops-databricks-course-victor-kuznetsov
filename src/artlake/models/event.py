@@ -19,15 +19,6 @@ class ProcessingStatus(StrEnum):
     FAILED = "failed"
 
 
-class SeenUrlStatus(StrEnum):
-    """Status of a seen URL in the dedup tracker."""
-
-    PENDING = "pending"
-    ACCEPTED = "accepted"
-    FILTERED_COUNTRY = "filtered_country"
-    DUPLICATE = "duplicate"
-
-
 class RawEvent(BaseModel):
     """Raw search result written to staging.search_results."""
 
@@ -41,7 +32,6 @@ class RawEvent(BaseModel):
     scraped_at: datetime | None = None
     language: str
     artifact_urls: list[str] = []
-    processing_status: ProcessingStatus = ProcessingStatus.NEW
     ingested_at: datetime = Field(default_factory=_now)
 
 
@@ -107,6 +97,7 @@ class SeenUrl(BaseModel):
     model_config = ConfigDict(strict=True)
 
     url: HttpUrl
+    title: str
+    source: str
     fingerprint: str
-    first_seen_at: datetime
-    status: SeenUrlStatus = SeenUrlStatus.PENDING
+    ingested_at: datetime = Field(default_factory=_now)
