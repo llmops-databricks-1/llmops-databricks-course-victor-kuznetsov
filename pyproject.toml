@@ -21,7 +21,9 @@ dependencies = [
     "databricks-agents==1.8.2",
     "pyyaml==6.0.3",
     "typer==0.24.1",
-    "ddgs==9.11.4"
+    "ddgs==9.11.4",
+    "requests==2.32.3",
+    "beautifulsoup4==4.13.4"
 ]
 
 [project.scripts]
@@ -30,6 +32,7 @@ artlake-generate-queries = "artlake.search.generate:main"
 artlake-search = "artlake.search.web:main"
 artlake-search-social = "artlake.search.social:main"
 artlake-dedup = "artlake.filter.dedup:main"
+artlake-scrape-pages = "artlake.scrape.pages:main"
 
 [project.optional-dependencies]
 dev = ["databricks-connect>=17.0, <18",
@@ -110,6 +113,8 @@ module = [
     "backoff",
     "databricks.sdk",
     "databricks.sdk.*",
+    "bs4",
+    "requests",
     "ddgs",
     "ddgs.*",
     "pandas",

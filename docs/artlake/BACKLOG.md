@@ -214,18 +214,33 @@ Platforms are hand-authored config (not generated), so this file lives in `confi
 **Module:** `scrape/pages.py` → `artlake-scrape-pages`
 
 **Behaviour:**
-- Read URLs from `artlake.staging.seen_urls` LEFT ANTI JOIN `artlake.staging.scraped_pages` on url (i.e. seen but not yet scraped)
-- Fetch pages with `requests` + `beautifulsoup4`
-- Extract: title, main content, dates, location mentions
-- Detect PDF/image links → `artifact_urls`
-- Write to `artlake.staging.scraped_pages` with `processing_status = 'new'`
+
+Two-mode entry point, designed for Databricks `for_each_task` parallelism:
+
+- `--mode list` — anti-join `artlake.staging.seen_urls` LEFT ANTI JOIN `artlake.staging.scraped_pages` on `fingerprint` (PK); emit the unseen URL list as a Databricks task value (`dbutils.jobs.taskValues.set`). No `processing_status` used — coordination is purely by presence in `scraped_pages`.
+- `--mode scrape --url <url>` — fetch a single URL (one `for_each_task` iteration):
+  1. Check `robots.txt` via stdlib `urllib.robotparser` — skip if disallowed
+  2. Try `/<domain>/llms.txt` — use structured markdown content if available
+  3. Fall back to `requests` + `beautifulsoup4` raw HTML
+  4. Extract **raw content only**: title, body text, raw hrefs
+  5. Detect PDF/image artifact links (`.pdf` hrefs, poster/flyer `<img>` heuristics) → `artifact_urls`
+  6. Write one row to `artlake.staging.scraped_pages`: fingerprint (sha2, PK), url, title, raw_text, artifact_urls, `processing_status = 'new'`
+
+No date/location extraction at this step — deferred to downstream `artlake-clean-events`.
 
 **Acceptance criteria:**
-- PDF/image link detection
-- Timeout and error handling (connection errors, HTTP 4xx/5xx)
-- Unit tests with saved HTML fixtures
+- [ ] Anti-join on `fingerprint`, not `url` string
+- [ ] `robots.txt` respected before fetching
+- [ ] `llms.txt` tried before raw HTML fallback
+- [ ] Raw content stored only (no structured extraction)
+- [ ] `fingerprint` written as PK on `scraped_pages`
+- [ ] PDF/image artifact link detection
+- [ ] Timeout and error handling (connection errors, HTTP 4xx/5xx) — write `processing_status = 'failed'` on error
+- [ ] Unit tests with saved HTML fixtures (no live HTTP)
+- [ ] Entry point `artlake-scrape-pages` declared in `pyproject.toml`
+- [ ] `resources/scrape_pages_job.yml` with `for_each_task` pattern
 
-**Upgrade path:** SerpAPI (paid) when richer content extraction or JS-rendered pages are needed.
+**Upgrade path:** SerpAPI (paid) when JS-rendered pages or richer content extraction is needed.
 
 ---
 

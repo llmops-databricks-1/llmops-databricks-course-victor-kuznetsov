@@ -101,3 +101,18 @@ class SeenUrl(BaseModel):
     source: str
     fingerprint: str
     ingested_at: datetime = Field(default_factory=_now)
+
+
+class ScrapedPage(BaseModel):
+    """Raw scraped page written to staging.scraped_pages."""
+
+    model_config = ConfigDict(strict=True)
+
+    fingerprint: str
+    url: HttpUrl
+    title: str
+    raw_text: str
+    artifact_urls: list[str] = []
+    processing_status: ProcessingStatus = ProcessingStatus.NEW
+    error: str | None = None
+    scraped_at: datetime = Field(default_factory=_now)
