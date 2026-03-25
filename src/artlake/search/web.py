@@ -167,7 +167,9 @@ def write_results(events: list[RawEvent], table: str, env: str = "dev") -> None:
         for e in events
     ]
     df = spark.createDataFrame(pd.DataFrame(rows))
-    df.write.format("delta").mode("append").saveAsTable(table)
+    df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(
+        table
+    )
     logger.info("Wrote {} rows to {}", len(rows), table)
 
 
