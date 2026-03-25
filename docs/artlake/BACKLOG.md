@@ -36,7 +36,7 @@ src/artlake/
 ├── search/                  # Finding events online
 │   ├── web.py               #   DuckDuckGo general search         → artlake-search
 │   ├── social.py            #   Site-scoped social media queries   → artlake-search-social
-│   └── keywords.py          #   Multilingual keyword generation (base EN → translated per language)
+│   └── generate.py          #   Multilingual query generation (base EN → translated per language) → artlake-generate-queries
 │
 ├── scrape/                  # Fetching content from web pages
 │   ├── pages.py             #   BS4 + requests, artifact link detection → artlake-scrape-pages
@@ -87,7 +87,7 @@ Downstream tasks read rows where `processing_status = 'done'` from the upstream 
 
 **Ingestion workflow:**
 ```
-artlake-search → artlake-search-social → artlake-dedup → artlake-scrape-pages
+artlake-generate-queries → artlake-search → artlake-search-social → artlake-dedup → artlake-scrape-pages
 → artlake-download-artifacts → artlake-geocode → artlake-clean-events
 ```
 
@@ -127,12 +127,13 @@ artlake-translate → artlake-process-artifacts → artlake-categorise-rules →
 
 ### 1.2 — Multilingual keyword generation — [#8](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/8)
 
-**Module:** `search/keywords.py` (library module, not an entry point)
+**Module:** `search/generate.py` → entry point `artlake-generate-queries`
 
 **Behaviour:**
-- Define base English keywords per category (e.g. "open call painting", "art market", "art exhibition")
-- Translate to target languages using lookup dictionaries or LLM
-- Generate search query strings per language × category × country
+- Read base English keywords and country/language config from `config/input/keywords.yml`
+- Translate keywords to target languages via LLM (Databricks Foundation Model API)
+- Generate search query strings per language × category × country (country name included in each query)
+- Write output to `config/output/queries.yml` (bundled with DAB, resolved at runtime to the workspace files path)
 
 **Acceptance criteria:**
 - Keyword sets for EN, NL, DE, FR
@@ -146,14 +147,15 @@ artlake-translate → artlake-process-artifacts → artlake-categorise-rules →
 **Module:** `search/web.py` → `artlake-search`
 
 **Behaviour:**
-- Use keywords from 1.2 to generate queries per language × category × target country
-- Execute via `duckduckgo-search`
-- Tag each result with query language
+- Read pre-generated queries from `config/output/queries.yml` (written by `artlake-generate-queries`)
+- Execute each query via `duckduckgo-search`
+- Tag each result with the query language
 - Write to `artlake.staging.search_results`
 
 **Acceptance criteria:**
-- Country names included in queries
-- Unit tests with mocked responses
+- Country names included in queries (guaranteed by query generation step)
+- Each result tagged with query language
+- Unit tests with mocked `duckduckgo-search` responses
 - Rate limit / empty result handling (loguru)
 
 ---
@@ -422,8 +424,8 @@ artlake-translate → artlake-process-artifacts → artlake-categorise-rules →
 ### Code dependencies (what must be implemented before what)
 
 ```
-1.1 (models) ─── 1.2 (keywords) ──┬── 1.3 (search web)
-                                    └── 1.4 (search social)
+1.1 (models) ─── 1.2 (generate-queries) ──┬── 1.3 (search web)
+                                            └── 1.4 (search social)
                  1.1 (models) ──┬── 1.5 (dedup)
                                 ├── 1.6 (scrape pages)
                                 ├── 1.7 (artifact dl)
@@ -436,7 +438,7 @@ artlake-translate → artlake-process-artifacts → artlake-categorise-rules →
                  2.5 ── 2.7 (vector search)
 ```
 
-**Parallelisable after 1.1 + 1.2:** stories 1.3, 1.4, 1.5, 1.6, 1.7, 1.8 can be developed concurrently (they share only the data models).
+**Parallelisable after 1.1 + 1.2:** stories 1.3, 1.4, 1.5, 1.6, 1.7, 1.8 can be developed concurrently (they share only the data models). At runtime, 1.3 and 1.4 depend on 1.2 having written `queries.yml`.
 
 ### Workflow dependencies (task execution order at runtime)
 
