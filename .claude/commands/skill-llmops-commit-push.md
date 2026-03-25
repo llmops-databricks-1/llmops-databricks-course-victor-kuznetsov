@@ -20,14 +20,24 @@ git status
 If there are no staged or unstaged changes and no untracked files, stop:
 > "Nothing to commit — working tree is clean."
 
-### 3. Run pre-commit hooks
+### 3. Stage all changes and run pre-commit hooks
 
+```bash
+git add -A
+```
+
+Then run pre-commit hooks:
 ```bash
 uv run pre-commit run --all-files
 ```
 
-- If any hook **modifies files** (e.g. end-of-file-fixer, ruff format), re-run once more to confirm all hooks pass cleanly after the auto-fixes.
-- If any hook **fails with errors** that require manual fixes (e.g. ruff lint violations), stop and report the errors to the user. Do not proceed until fixed.
+If hooks modify files (e.g. ruff auto-fixes, end-of-file-fixer), re-stage and re-run until clean:
+```bash
+git add -A
+uv run pre-commit run --all-files
+```
+
+If hooks fail with errors that cannot be auto-fixed, fix them manually, re-stage, and re-run. Do not proceed until all hooks pass.
 
 ### 4. Run unit tests
 
@@ -37,13 +47,7 @@ uv run --extra ci pytest
 
 If any tests fail, stop and report the failures. Do not proceed until fixed.
 
-### 5. Stage all changes
-
-```bash
-git add -A
-```
-
-### 6. Craft the commit message
+### 5. Craft the commit message
 
 Inspect what changed:
 ```bash
@@ -64,7 +68,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 
 **Types:** `feat`, `fix`, `docs`, `chore`, `refactor`, `style`, `test`
 
-### 7. Commit
+### 6. Commit
 
 ```bash
 git commit -m "$(cat <<'EOF'
@@ -75,7 +79,7 @@ EOF
 
 If the commit is rejected by a pre-commit hook, fix the issue, re-stage, and create a **new** commit (never amend).
 
-### 8. Push
+### 7. Push
 
 ```bash
 git push -u origin HEAD

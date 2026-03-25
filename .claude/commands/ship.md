@@ -26,11 +26,24 @@ Use the output to understand:
 - The nature of each change (new feature, fix, refactor, docs, chore, etc.)
 - The recent commit style in this repo (prefix conventions, tone, length)
 
-### 3. Stage all changes
+### 3. Stage all changes and run pre-commit
 
 ```bash
 git add -A
 ```
+
+Then run pre-commit hooks **before** committing:
+```bash
+uv run pre-commit run --all-files
+```
+
+If hooks modify files (e.g. ruff auto-fixes), re-stage and re-run until clean:
+```bash
+git add -A
+uv run pre-commit run --all-files
+```
+
+If hooks fail with errors that cannot be auto-fixed, fix them manually, re-stage, and re-run.
 
 ### 4. Craft the commit message
 

@@ -1,0 +1,295 @@
+"""Tests for ArtLake Pydantic data models."""
+
+from datetime import UTC, datetime
+
+import pytest
+from pydantic import ValidationError
+
+from artlake.models import (
+    ArtLakeConfig,
+    CleanEvent,
+    EventArtifact,
+    GoldEvent,
+    ProcessingStatus,
+    RawEvent,
+    SeenUrl,
+    SeenUrlStatus,
+)
+
+# ---------------------------------------------------------------------------
+# RawEvent
+# ---------------------------------------------------------------------------
+
+
+class TestRawEvent:
+    def test_valid_minimal(self) -> None:
+        event = RawEvent(
+            url="https://example.com/event",
+            title="Open Call",
+            snippet="Apply now",
+            source="duckduckgo",
+            language="en",
+        )
+        assert event.processing_status == ProcessingStatus.NEW
+        assert event.artifact_urls == []
+        assert event.raw_html is None
+
+    def test_valid_full(self) -> None:
+        event = RawEvent(
+            url="https://example.com/event",
+            title="Open Call",
+            snippet="Apply now",
+            source="duckduckgo",
+            raw_html="<html></html>",
+            scraped_at=datetime(2026, 1, 1, tzinfo=UTC),
+            language="nl",
+            artifact_urls=["https://example.com/file.pdf"],
+            processing_status=ProcessingStatus.DONE,
+        )
+        assert event.processing_status == ProcessingStatus.DONE
+        assert len(event.artifact_urls) == 1
+
+    def test_invalid_url(self) -> None:
+        with pytest.raises(ValidationError):
+            RawEvent(
+                url="not-a-url",
+                title="Open Call",
+                snippet="Apply now",
+                source="duckduckgo",
+                language="en",
+            )
+
+    def test_missing_required_field(self) -> None:
+        with pytest.raises(ValidationError):
+            RawEvent(
+                url="https://example.com/event",
+                title="Open Call",
+                # missing snippet, source, language
+            )
+
+    def test_invalid_processing_status(self) -> None:
+        with pytest.raises(ValidationError):
+            RawEvent(
+                url="https://example.com/event",
+                title="Open Call",
+                snippet="Apply now",
+                source="duckduckgo",
+                language="en",
+                processing_status="invalid",
+            )
+
+
+# ---------------------------------------------------------------------------
+# CleanEvent
+# ---------------------------------------------------------------------------
+
+
+class TestCleanEvent:
+    def test_valid(self) -> None:
+        event = CleanEvent(
+            title="Art Market",
+            description="Annual art market in Amsterdam",
+            location_text="Amsterdam, Netherlands",
+            language="en",
+            source="duckduckgo",
+            url="https://example.com/market",
+        )
+        assert event.date_start is None
+        assert event.lat is None
+        assert event.artifact_paths == []
+
+    def test_with_dates_and_geo(self) -> None:
+        event = CleanEvent(
+            title="Art Market",
+            description="Annual art market",
+            date_start=datetime(2026, 6, 1, tzinfo=UTC),
+            date_end=datetime(2026, 6, 3, tzinfo=UTC),
+            location_text="Amsterdam",
+            lat=52.3676,
+            lng=4.9041,
+            country="NL",
+            language="en",
+            source="duckduckgo",
+            url="https://example.com/market",
+        )
+        assert event.country == "NL"
+
+    def test_missing_required(self) -> None:
+        with pytest.raises(ValidationError):
+            CleanEvent(
+                title="Art Market",
+                # missing description, location_text, language, source, url
+            )
+
+
+# ---------------------------------------------------------------------------
+# GoldEvent
+# ---------------------------------------------------------------------------
+
+
+class TestGoldEvent:
+    def test_valid(self) -> None:
+        event = GoldEvent(
+            title="Art Market",
+            description="Annual art market",
+            location_text="Amsterdam",
+            language="en",
+            source="duckduckgo",
+            url="https://example.com/market",
+            category="market",
+        )
+        assert event.artifact_summaries == []
+
+    def test_missing_category(self) -> None:
+        with pytest.raises(ValidationError):
+            GoldEvent(
+                title="Art Market",
+                description="Annual art market",
+                location_text="Amsterdam",
+                language="en",
+                source="duckduckgo",
+                url="https://example.com/market",
+                # missing category
+            )
+
+    def test_with_summaries(self) -> None:
+        event = GoldEvent(
+            title="Open Call",
+            description="Submit your work",
+            location_text="Berlin",
+            language="en",
+            source="duckduckgo",
+            url="https://example.com/call",
+            category="open_call",
+            artifact_summaries=["Deadline: 2026-07-01, Fee: €25"],
+        )
+        assert len(event.artifact_summaries) == 1
+
+
+# ---------------------------------------------------------------------------
+# EventArtifact
+# ---------------------------------------------------------------------------
+
+
+class TestEventArtifact:
+    def test_valid_minimal(self) -> None:
+        artifact = EventArtifact(
+            url="https://example.com/file.pdf",
+            artifact_type="pdf",
+        )
+        assert artifact.processing_status == ProcessingStatus.NEW
+        assert artifact.file_path is None
+
+    def test_valid_full(self) -> None:
+        artifact = EventArtifact(
+            url="https://example.com/poster.jpg",
+            artifact_type="image",
+            file_path="/volumes/raw_artifacts/abc/poster.jpg",
+            extracted_text="Open call for painters",
+            llm_summary="Deadline: 2026-07-01",
+            processing_status=ProcessingStatus.DONE,
+        )
+        assert artifact.processing_status == ProcessingStatus.DONE
+
+    def test_invalid_processing_status(self) -> None:
+        with pytest.raises(ValidationError):
+            EventArtifact(
+                url="https://example.com/file.pdf",
+                artifact_type="pdf",
+                processing_status="unknown",
+            )
+
+
+# ---------------------------------------------------------------------------
+# SeenUrl
+# ---------------------------------------------------------------------------
+
+
+class TestSeenUrl:
+    def test_valid(self) -> None:
+        seen = SeenUrl(
+            url="https://example.com/event",
+            fingerprint="abc123",
+            first_seen_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        assert seen.status == SeenUrlStatus.PENDING
+
+    def test_all_statuses(self) -> None:
+        for status in SeenUrlStatus:
+            seen = SeenUrl(
+                url="https://example.com/event",
+                fingerprint="abc123",
+                first_seen_at=datetime(2026, 1, 1, tzinfo=UTC),
+                status=status,
+            )
+            assert seen.status == status
+
+    def test_invalid_status(self) -> None:
+        with pytest.raises(ValidationError):
+            SeenUrl(
+                url="https://example.com/event",
+                fingerprint="abc123",
+                first_seen_at=datetime(2026, 1, 1, tzinfo=UTC),
+                status="deleted",
+            )
+
+    def test_missing_fingerprint(self) -> None:
+        with pytest.raises(ValidationError):
+            SeenUrl(
+                url="https://example.com/event",
+                first_seen_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+
+# ---------------------------------------------------------------------------
+# ArtLakeConfig
+# ---------------------------------------------------------------------------
+
+
+class TestArtLakeConfig:
+    def test_valid(self) -> None:
+        config = ArtLakeConfig(
+            target_countries=["NL", "BE", "DE", "FR"],
+            languages=["en", "nl", "de", "fr"],
+            categories=["open_call", "market", "exhibition", "workshop"],
+            scrape_schedule="0 6 * * *",
+        )
+        assert config.target_language == "en"
+
+    def test_custom_target_language(self) -> None:
+        config = ArtLakeConfig(
+            target_countries=["NL"],
+            languages=["nl"],
+            target_language="nl",
+            categories=["open_call"],
+            scrape_schedule="0 6 * * *",
+        )
+        assert config.target_language == "nl"
+
+    def test_missing_required(self) -> None:
+        with pytest.raises(ValidationError):
+            ArtLakeConfig(
+                target_countries=["NL"],
+                # missing languages, categories, scrape_schedule
+            )
+
+
+# ---------------------------------------------------------------------------
+# ProcessingStatus enum values
+# ---------------------------------------------------------------------------
+
+
+class TestProcessingStatus:
+    def test_values(self) -> None:
+        assert set(ProcessingStatus) == {
+            ProcessingStatus.NEW,
+            ProcessingStatus.PROCESSING,
+            ProcessingStatus.DONE,
+            ProcessingStatus.FAILED,
+        }
+
+    def test_string_values(self) -> None:
+        assert ProcessingStatus.NEW == "new"
+        assert ProcessingStatus.PROCESSING == "processing"
+        assert ProcessingStatus.DONE == "done"
+        assert ProcessingStatus.FAILED == "failed"
