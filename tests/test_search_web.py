@@ -219,6 +219,9 @@ class TestWriteResults:
         mock_spark = MagicMock()
         mock_df = MagicMock()
         mock_spark.createDataFrame.return_value = mock_df
+        # Make SHOW CATALOGS return the catalog as already existing so
+        # _ensure_catalog returns early without touching WorkspaceClient.
+        mock_spark.sql.return_value.collect.return_value = [("artlake",)]
 
         mock_pyspark = MagicMock()
         mock_pyspark.sql.SparkSession = MagicMock()
