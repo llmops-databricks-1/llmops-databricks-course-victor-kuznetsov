@@ -1,9 +1,13 @@
 """Event and artifact data models."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
 
 
 class ProcessingStatus(StrEnum):
@@ -38,6 +42,7 @@ class RawEvent(BaseModel):
     language: str
     artifact_urls: list[str] = []
     processing_status: ProcessingStatus = ProcessingStatus.NEW
+    ingested_at: datetime = Field(default_factory=_now)
 
 
 class CleanEvent(BaseModel):
@@ -57,6 +62,7 @@ class CleanEvent(BaseModel):
     source: str
     url: HttpUrl
     artifact_paths: list[str] = []
+    ingested_at: datetime = Field(default_factory=_now)
 
 
 class GoldEvent(BaseModel):
@@ -78,6 +84,7 @@ class GoldEvent(BaseModel):
     artifact_paths: list[str] = []
     category: str
     artifact_summaries: list[str] = []
+    ingested_at: datetime = Field(default_factory=_now)
 
 
 class EventArtifact(BaseModel):
@@ -91,6 +98,7 @@ class EventArtifact(BaseModel):
     extracted_text: str | None = None
     llm_summary: str | None = None
     processing_status: ProcessingStatus = ProcessingStatus.NEW
+    ingested_at: datetime = Field(default_factory=_now)
 
 
 class SeenUrl(BaseModel):

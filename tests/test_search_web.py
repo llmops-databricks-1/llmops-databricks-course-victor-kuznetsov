@@ -240,9 +240,9 @@ class TestWriteResults:
             write_results([event], "artlake.staging.search_results")
 
         mock_spark.createDataFrame.assert_called_once()
-        mock_df.write.format("delta").mode("append").saveAsTable.assert_called_once_with(
-            "artlake.staging.search_results"
-        )
+        mock_df.write.format("delta").mode("append").option(
+            "mergeSchema", "true"
+        ).saveAsTable.assert_called_once_with("artlake.staging.search_results")
 
     def test_empty_events_skips_write(self) -> None:
         import sys
@@ -294,7 +294,45 @@ class TestMain:
             main()
 
         mock_load.assert_called_once()
-        mock_search.assert_called_once_with(mock_queries, max_results=10)
+        mock_search.assert_called_once_with([_QUERY_NL], max_results=10)
         mock_write.assert_called_once_with(
             mock_events, "artlake.staging.search_results", env="dev"
         )
+
+    def test_main_writes_per_batch(self) -> None:
+        from artlake.search.web import main
+
+        queries = [_QUERY_NL, _QUERY_DE]
+        batch_events = [
+            RawEvent(
+                url=f"https://example.com/{i}",  # type: ignore[arg-type]
+                title=f"Event {i}",
+                snippet="snippet",
+                source="duckduckgo",
+                language="nl",
+            )
+            for i in range(2)
+        ]
+
+        with (
+            patch("artlake.search.web.load_queries", return_value=queries),
+            patch(
+                "artlake.search.web.search_web", return_value=batch_events
+            ) as mock_search,
+            patch("artlake.search.web.write_results") as mock_write,
+            patch(
+                "sys.argv",
+                [
+                    "artlake-search",
+                    "--queries",
+                    "config/output/queries.yml",
+                    "--batch-size",
+                    "1",
+                ],
+            ),
+        ):
+            main()
+
+        # batch_size=1 → one search+write call per query
+        assert mock_search.call_count == 2
+        assert mock_write.call_count == 2

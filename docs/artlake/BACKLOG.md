@@ -165,12 +165,29 @@ artlake-translate → artlake-process-artifacts → artlake-categorise-rules →
 **Module:** `search/social.py` → `artlake-search-social`
 
 **Behaviour:**
-- `site:facebook.com/events`, `site:instagram.com` queries using keywords from 1.2
-- Write to `artlake.staging.search_results` with source per platform
+- Load target platforms from `config/input/social_platforms.yml` (mapping of `source_name → site: operator`)
+- Combine each query from `queries.yml` with the site: operator per platform
+- Write to `artlake.staging.search_results` with source set to the platform name
+
+**Platform config** (`config/input/social_platforms.yml`):
+```yaml
+facebook: "site:facebook.com/events"
+instagram: "site:instagram.com"
+linkedin: "site:linkedin.com"
+```
+
+Platforms are hand-authored config (not generated), so this file lives in `config/input/` alongside `keywords.yml`. Adding or removing a platform requires no code change.
+
+**Key design decisions:**
+- Platforms passed as `dict[str, str]` to `search_social()` — no dataclass needed
+- `load_platforms()` mirrors `load_queries()` pattern
+- `write_results` reused from `search/web.py`
 
 **Acceptance criteria:**
-- Query templates per platform
+- `config/input/social_platforms.yml` drives platform list
+- Source field correctly identifies the originating platform
 - Unit tests with mocked responses
+- Entry point `artlake-search-social` declared in `pyproject.toml`
 
 ---
 

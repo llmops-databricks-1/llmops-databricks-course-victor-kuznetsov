@@ -162,11 +162,14 @@ def write_results(events: list[RawEvent], table: str, env: str = "dev") -> None:
             "source": e.source,
             "language": e.language,
             "processing_status": e.processing_status.value,
+            "ingested_at": e.ingested_at,
         }
         for e in events
     ]
     df = spark.createDataFrame(pd.DataFrame(rows))
-    df.write.format("delta").mode("append").saveAsTable(table)
+    df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(
+        table
+    )
     logger.info("Wrote {} rows to {}", len(rows), table)
 
 
@@ -190,6 +193,12 @@ def main() -> None:
         default=10,
     )
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=10,
+        help="Number of queries to process before writing results to Delta.",
+    )
+    parser.add_argument(
         "--env",
         default="dev",
         help="Deployment environment (dev/tst/acc/prd), used to resolve el-uc-{env}.",
@@ -199,5 +208,14 @@ def main() -> None:
     queries = load_queries(args.queries)
     logger.info("Loaded {} queries from {}", len(queries), args.queries)
 
-    events = search_web(queries, max_results=args.max_results)
-    write_results(events, args.table, env=args.env)
+    for i in range(0, len(queries), args.batch_size):
+        batch = queries[i : i + args.batch_size]
+        logger.info(
+            "Processing query batch {}/{} (queries {}-{})",
+            i // args.batch_size + 1,
+            -(-len(queries) // args.batch_size),
+            i + 1,
+            min(i + args.batch_size, len(queries)),
+        )
+        events = search_web(batch, max_results=args.max_results)
+        write_results(events, args.table, env=args.env)
