@@ -10,12 +10,12 @@ ArtLake has architecture docs, ADRs, repo standards, CI, and tooling in place �
 - **Function-based module naming** — modules named for what the code does.
 - **Country filter, not radius** — ingestion filters by configurable country list. Radius filtering deferred to Phase 3 (BI, user-interactive).
 - **No separate language detection** — search queries are generated per target language; results tagged with query language. No lingua-based post-filter.
-- **Seen-URLs tracking** — all evaluated URLs (accepted + filtered) stored in Delta table. Fingerprint on full normalised URL (supports art aggregators).
+- **Seen-URLs tracking** — unseen URLs written to Delta table as a persistent set. Fingerprint is `sha2(url, 256)` — no normalization needed; DuckDuckGo returns canonical URLs and exact hash match covers all real duplicates.
 - **Artifacts** — detect, download, and process PDFs/images. `ai_parse_document` (Databricks-native SQL function) for PDF text extraction and image OCR. Raw files in UC Volumes.
 - **Categorisation** — rule-based MVP first, then LLM upgrade.
 - **Social media** — separate story from general search.
 - **Content translation** — all scraped content is translated to the configured language (default: English) via Foundation Model API before processing. No need for multilingual embeddings or classification.
-- **Processing status tracking** — staging tables use a `processing_status` column for row-level progress tracking (e.g. `new` → `processing` → `done` / `failed`). Downstream tasks filter on status instead of relying on run-level isolation.
+- **Processing status tracking** — `processing_status` column (`new` → `processing` → `done` / `failed`) used only on tables for expensive operations (`scraped_pages`, `artifacts`). Not used on `search_results` or `seen_urls`.
 - **No Playwright** — `beautifulsoup4` + `requests` for page scraping. SerpAPI (paid) as upgrade path when richer content extraction is needed.
 - **Config via DAB** — pipeline configuration via DAB variables or a bundled YAML file deployed with DAB artifacts (decision pending).
 - **DAB-native deployment** — no custom parameters; rely on Databricks Asset Bundle context (`${bundle.target}`, etc.). Infrastructure (UC schemas, volumes) managed via DABs.
@@ -70,7 +70,7 @@ src/artlake/
 ### Data flow between tasks (via Delta tables)
 
 ```
-artlake.staging.search_results   ← search writes here (tagged with query language, processing_status)
+artlake.staging.search_results   ← search writes here (tagged with query language and source)
 artlake.staging.seen_urls        ← dedup reads/writes (persists across runs)
 artlake.staging.scraped_pages    ← scrape writes here (processing_status)
 artlake.staging.artifacts        ← download/process writes here (processing_status)
@@ -81,7 +81,7 @@ artlake.gold.embeddings          ← embed writes here (from translated content)
 ```
 
 **`processing_status` values:** `new` → `processing` → `done` | `failed`
-Downstream tasks read rows where `processing_status = 'done'` from the upstream table.
+Used on `scraped_pages` and `artifacts`. Downstream tasks read rows where upstream `processing_status = 'done'`.
 
 ### Databricks Workflow structure
 
@@ -115,7 +115,7 @@ artlake-translate → artlake-process-artifacts → artlake-categorise-rules →
 - `CleanEvent` — title, description, date_start, date_end, location_text, lat, lng, country, language, source, url, artifact_paths
 - `GoldEvent` — extends CleanEvent with category, artifact_summaries
 - `EventArtifact` — url, artifact_type (pdf/image), file_path, extracted_text, llm_summary
-- `SeenUrl` — url (full normalised URL as primary key), fingerprint, first_seen_at, status (accepted/filtered_country/duplicate)
+- `SeenUrl` — url, title, source, fingerprint (sha2(url, 256)), ingested_at
 - `ArtLakeConfig` — target_countries, languages, target_language (default: "en"), categories, scrape_schedule
 
 **Acceptance criteria:**
@@ -196,17 +196,16 @@ Platforms are hand-authored config (not generated), so this file lives in `confi
 **Module:** `filter/dedup.py` → `artlake-dedup`
 
 **Behaviour:**
-- Read new URLs from `artlake.staging.search_results`
-- Check against `artlake.staging.seen_urls`
-- **Full normalised URL** as primary dedup key
-- Title as secondary signal for cross-site near-duplicates
-- Write new URLs to `seen_urls` with status="pending"
-- Pass only unseen URLs forward
+- Read URLs from `artlake.staging.search_results`
+- Compute `sha2(url, 256)` fingerprint per row
+- Anti-join against `artlake.staging.seen_urls` on fingerprint
+- Write only unseen URLs to `seen_urls` (url, title, source, fingerprint, ingested_at)
+- `seen_urls` is a pure set — presence means seen; no status column
 
 **Acceptance criteria:**
-- URL normalisation (strip tracking params, trailing slashes)
-- Persists across runs
-- Unit tests: duplicates, near-duplicates, same-domain-different-path (aggregator case)
+- Persists across runs — re-running writes 0 rows when nothing new
+- Unit tests: exact duplicates, same-domain-different-path (aggregator case), within-batch duplicates
+- Entry point `artlake-dedup` declared in `pyproject.toml`
 
 ---
 
@@ -215,7 +214,7 @@ Platforms are hand-authored config (not generated), so this file lives in `confi
 **Module:** `scrape/pages.py` → `artlake-scrape-pages`
 
 **Behaviour:**
-- Read URLs where `processing_status = 'done'` from `staging.search_results` (after dedup)
+- Read URLs from `artlake.staging.seen_urls` LEFT ANTI JOIN `artlake.staging.scraped_pages` on url (i.e. seen but not yet scraped)
 - Fetch pages with `requests` + `beautifulsoup4`
 - Extract: title, main content, dates, location mentions
 - Detect PDF/image links → `artifact_urls`
@@ -254,7 +253,6 @@ Platforms are hand-authored config (not generated), so this file lives in `confi
 **Behaviour:**
 - Geocode event location text → (lat, lng, country) via `geopy` + Nominatim
 - Keep events in `target_countries`; filter out others
-- Update `seen_urls` status to "filtered_country" for rejected
 - Store lat/lng/country on accepted events
 
 **Acceptance criteria:**
@@ -275,7 +273,6 @@ Platforms are hand-authored config (not generated), so this file lives in `confi
 - Parse dates (ISO, natural language, European dd/mm/yyyy)
 - Normalise titles, descriptions, location text
 - Write structured `CleanEvent` records to `artlake.bronze.raw_events`
-- Update `seen_urls` status to "accepted"
 
 **Acceptance criteria:**
 - Date parsing handles multiple formats

@@ -75,7 +75,7 @@ Orchestrated as **Databricks Workflows**. Each step is a `.whl` entry point exec
 
 - **Query generation** (`artlake-generate-queries`) — translates base English keywords to NL/DE/FR via LLM; writes `queries.yml` (bundled with DAB artifacts) with one query per language × category × country. Runs once before search; re-run only when keywords change.
 - **Search** (`artlake-search`, `artlake-search-social`) — reads pre-generated `queries.yml` and executes each query via `duckduckgo-search`. Results tagged with query language. Country names already included in queries (from generation step).
-- **Dedup + Seen-URL Tracking** (`artlake-dedup`) — fingerprints each URL (full normalised URL as primary key, title as secondary signal). Stores ALL evaluated URLs in `artlake.staging.seen_urls` (accepted + filtered) to avoid re-scraping across runs. Supports art aggregator sites where the domain is the same but event paths differ.
+- **Dedup + Seen-URL Tracking** (`artlake-dedup`) — fingerprints each URL with `sha2(url, 256)` and anti-joins against `artlake.staging.seen_urls`. Writes only unseen URLs to `seen_urls`, making it a persistent set across pipeline runs. Supports art aggregators where the domain is the same but event paths differ (each path produces a distinct hash).
 - **Page Scraper** (`artlake-scrape-pages`) — `requests` + BeautifulSoup for HTML content extraction. Detects PDF/image links (open call rules, posters, flyers). Upgrade path: SerpAPI (paid) when JS-rendered pages or richer content extraction is needed.
 - **Artifact Downloader** (`artlake-download-artifacts`) — downloads detected PDFs and images to Unity Catalog Volumes.
 - **Country Filter** (`artlake-geocode`) — resolves event location to lat/lng/country via Nominatim (ADR-003). Filters by configurable `target_countries`. Lat/lng stored for future BI-layer radius filtering. No radius filter at ingestion (ADR-013).
@@ -87,8 +87,8 @@ Orchestrated as **Databricks Workflows**. Each step is a `.whl` entry point exec
 
 | Layer | Table | Content |
 |---|---|---|
-| Staging | `artlake.staging.search_results` | Raw search results, tagged with query language and source. `processing_status` column. |
-| Staging | `artlake.staging.seen_urls` | All evaluated URLs with status (pending/accepted/filtered_country/duplicate) — persists across runs |
+| Staging | `artlake.staging.search_results` | Raw search results, tagged with query language and source. |
+| Staging | `artlake.staging.seen_urls` | All URLs written by dedup — presence = seen. Persists across runs. Schema: url, title, source, fingerprint (sha2), ingested_at. |
 | Staging | `artlake.staging.scraped_pages` | Extracted page content, artifact URLs. `processing_status` column. |
 | Staging | `artlake.staging.artifacts` | Artifact metadata and UC Volume file paths. `processing_status` column. |
 | Bronze | `artlake.bronze.raw_events` | Structured clean events (title, description, dates, location, lat/lng, country, language, source, url) — original language |
@@ -96,7 +96,7 @@ Orchestrated as **Databricks Workflows**. Each step is a `.whl` entry point exec
 | Gold | `artlake.gold.events` | Categorised (open_call / market / exhibition / workshop / other), enriched with artifact summaries |
 | Gold | `artlake.gold.embeddings` | Vector embeddings for semantic search (Delta Sync to Vector Search) — from translated content |
 
-**`processing_status`** — staging tables track row-level progress: `new` → `processing` → `done` | `failed`. Downstream tasks read rows where upstream `processing_status = 'done'`.
+**`processing_status`** — used on staging tables for expensive operations (`scraped_pages`, `artifacts`) to track row-level progress: `new` → `processing` → `done` | `failed`. Not used on `search_results` or `seen_urls` — those tables use simpler coordination (anti-join on `seen_urls`, presence in `scraped_pages`).
 
 ### Processing Layer
 
