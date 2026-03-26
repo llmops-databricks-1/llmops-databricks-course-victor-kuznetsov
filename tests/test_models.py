@@ -266,6 +266,7 @@ class TestProcessingStatus:
             ProcessingStatus.DONE,
             ProcessingStatus.FAILED,
             ProcessingStatus.OUTDATED,
+            ProcessingStatus.REQUIRES_MANUAL_VALIDATION,
         }
 
     def test_string_values(self) -> None:

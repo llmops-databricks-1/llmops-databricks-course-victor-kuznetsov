@@ -39,13 +39,22 @@ uv run pre-commit run --all-files
 
 If hooks fail with errors that cannot be auto-fixed, fix them manually, re-stage, and re-run. Do not proceed until all hooks pass.
 
-### 4. Run unit tests
+### 4. Run unit tests and check coverage
 
 ```bash
 uv run --extra ci pytest
 ```
 
-If any tests fail, stop and report the failures. Do not proceed until fixed.
+This command runs tests **and** enforces the coverage threshold (configured via `--cov-fail-under` in `pyproject.toml`). A non-zero exit code means either tests failed **or** coverage is below the threshold.
+
+If the run fails for any reason — test failures, coverage below threshold, or import errors — **stop immediately** and report the full failure output. Do not proceed until all tests pass and coverage is above the threshold.
+
+To identify which lines are uncovered and causing a coverage failure, run:
+```bash
+uv run --extra ci coverage report --include="*/artlake/*" -m
+```
+
+Common fix for Spark/Databricks entry-point functions that cannot be unit-tested: add `# pragma: no cover` to the function definition line.
 
 ### 5. Craft the commit message
 

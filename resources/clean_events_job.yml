@@ -1,0 +1,31 @@
+resources:
+  jobs:
+    clean_events_job:
+      name: clean-events
+      tags:
+        project_name: "artlake"
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/*.whl
+
+      tasks:
+        - task_key: clean_events
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-clean-events
+            package_name: artlake
+            parameters:
+              - "--scraped-pages-table"
+              - "artlake.staging.scraped_pages"
+              - "--search-results-table"
+              - "artlake.staging.search_results"
+              - "--raw-events-table"
+              - "artlake.bronze.raw_events"
+              - "--model"
+              - "databricks-meta-llama-3-3-70b-instruct"
+              - "--env"
+              - "${bundle.target}"

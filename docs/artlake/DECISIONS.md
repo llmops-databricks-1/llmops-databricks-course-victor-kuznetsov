@@ -328,12 +328,44 @@ client = OpenAI(
 
 ---
 
+## ADR-023 · Clean Events — Multi-Language Extraction Funnel
+
+**Decision**: Parse scraped pages into structured `CleanEvent` records using a **cost-reducing funnel**: rule-based date parsing → early outdated filter → rule-based field extraction → cheap LLM fallback → `requires_manual_validation` if still incomplete.
+
+**Rationale**:
+
+- Scraped pages arrive in any language (EN/NL/DE/FR) and any format — a purely rule-based approach cannot handle all cases, but calling an LLM on every page is wasteful.
+- Filtering outdated events early (before LLM calls) prevents paying for compute on stale data. Events with no detected date are assumed ongoing and pass through.
+- `dateparser` (open-source, 200+ languages) handles ISO, European `dd/mm/yyyy`, and natural-language date formats in all target languages. No API cost.
+- Rule-based field extraction (title from scraped `<title>`, description from first 500 chars, location via keyword regex) covers the majority of well-structured pages for free.
+- LLM fallback (Databricks FM — `databricks-meta-llama-3-3-70b-instruct`, cheap + Databricks-native) is called only when rule-based extraction leaves fields incomplete. LLM also fills date gaps and re-checks outdated status after filling.
+- Records where even the LLM cannot extract structured fields are marked `requires_manual_validation` — visible for human review without blocking the pipeline.
+- Language is resolved by joining `scraped_pages` with `staging.search_results` on `url`; defaults to `"unknown"` when missing. Downstream `artlake-translate` handles the `"unknown"` case.
+
+**Processing status added**: `requires_manual_validation` — new value in `ProcessingStatus` enum, alongside `new`, `processing`, `done`, `failed`, `outdated`.
+
+**Funnel steps**:
+1. `parse_dates(raw_text)` — `dateparser.search.search_dates`, multi-language, filters dates > 2 years old (publication/copyright noise).
+2. `is_outdated(date_start, date_end)` → write `CleanEvent(processing_status='outdated')`, skip LLM.
+3. `extract_fields_rule_based(page)` — title, description, location via regex.
+4. `extract_fields_llm(page, client, model)` — called only when fields incomplete; also fills date gaps and re-checks outdated.
+5. `requires_manual_validation` if still incomplete after LLM.
+
+**Rejected**:
+- LLM-only extraction on every page — unnecessary cost at scale; dateparser covers the majority of date formats for free.
+- Separate language detection step — search queries already control language (ADR-004); `"unknown"` fallback is sufficient for this step.
+- Single-pass rule-based only — fails on non-English / non-structured pages.
+
+---
+
 ## Summary
 
 | Layer | Tool | Cost |
 |---|---|---|
 | Search | `duckduckgo-search` (SerpAPI upgrade path) | Free |
 | Scraping | `requests` + `beautifulsoup4` | Free |
+| Date parsing | `dateparser` (multi-language, 200+ languages) | Free |
+| Event cleaning | Rule-based → LLM fallback (Databricks FM) | Free / Databricks-native |
 | Geocoding | Nominatim / `geopy` | Free |
 | Language targeting | Multilingual keyword generation (search-level) | Free |
 | Content translation | Databricks Foundation Model API | Databricks-native |

@@ -18,6 +18,7 @@ class ProcessingStatus(StrEnum):
     DONE = "done"
     FAILED = "failed"
     OUTDATED = "outdated"
+    REQUIRES_MANUAL_VALIDATION = "requires_manual_validation"
 
 
 class RawEvent(BaseModel):
