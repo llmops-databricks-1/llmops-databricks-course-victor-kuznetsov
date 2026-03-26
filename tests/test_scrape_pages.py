@@ -181,23 +181,28 @@ class TestFetchHtml:
         mock_resp.text = "<html><body>Hello</body></html>"
         mock_resp.raise_for_status.return_value = None
         with patch("artlake.scrape.pages.requests.get", return_value=mock_resp):
-            result = fetch_html("https://example.com/event")
-        assert result == "<html><body>Hello</body></html>"
+            html, error = fetch_html("https://example.com/event")
+        assert html == "<html><body>Hello</body></html>"
+        assert error is None
 
     def test_returns_none_on_http_error(self) -> None:
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = requests.HTTPError("404")
         with patch("artlake.scrape.pages.requests.get", return_value=mock_resp):
-            result = fetch_html("https://example.com/event")
-        assert result is None
+            html, error = fetch_html("https://example.com/event")
+        assert html is None
+        assert error is not None
+        assert "HTTPError" in error
 
     def test_returns_none_on_connection_error(self) -> None:
         with patch(
             "artlake.scrape.pages.requests.get",
             side_effect=requests.ConnectionError("refused"),
         ):
-            result = fetch_html("https://example.com/event")
-        assert result is None
+            html, error = fetch_html("https://example.com/event")
+        assert html is None
+        assert error is not None
+        assert "ConnectionError" in error
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +219,7 @@ class TestScrapeUrl:
     def test_returns_failed_when_robots_disallows(self) -> None:
         with patch("artlake.scrape.pages.RobotFileParser") as mock_cls:
             mock_cls.return_value = self._mock_robots(False)
-            page = scrape_url("https://example.com/event")
+            page = scrape_url("https://example.com/event", respect_robots=True)
         assert page.processing_status == ProcessingStatus.FAILED
         assert page.error is not None
 
@@ -231,44 +236,42 @@ class TestScrapeUrl:
     def test_falls_back_to_html_when_no_llms_txt(self) -> None:
         html = _html("event_with_pdf.html")
         with (
-            patch("artlake.scrape.pages.RobotFileParser") as mock_cls,
             patch("artlake.scrape.pages.fetch_llms_txt", return_value=None),
-            patch("artlake.scrape.pages.fetch_html", return_value=html),
+            patch("artlake.scrape.pages.fetch_html", return_value=(html, None)),
         ):
-            mock_cls.return_value = self._mock_robots(True)
             page = scrape_url("https://example.com/event")
         assert "Open Call" in page.raw_text
         assert page.processing_status == ProcessingStatus.NEW
 
     def test_returns_failed_when_html_fetch_fails(self) -> None:
         with (
-            patch("artlake.scrape.pages.RobotFileParser") as mock_cls,
             patch("artlake.scrape.pages.fetch_llms_txt", return_value=None),
-            patch("artlake.scrape.pages.fetch_html", return_value=None),
+            patch(
+                "artlake.scrape.pages.fetch_html",
+                return_value=(None, "ConnectionError: refused"),
+            ),
         ):
-            mock_cls.return_value = self._mock_robots(True)
             page = scrape_url("https://example.com/event")
         assert page.processing_status == ProcessingStatus.FAILED
+        assert page.error == "ConnectionError: refused"
 
     def test_fingerprint_matches_url(self) -> None:
         url = "https://example.com/event"
         with (
-            patch("artlake.scrape.pages.RobotFileParser") as mock_cls,
             patch("artlake.scrape.pages.fetch_llms_txt", return_value=None),
-            patch("artlake.scrape.pages.fetch_html", return_value="<html></html>"),
+            patch(
+                "artlake.scrape.pages.fetch_html", return_value=("<html></html>", None)
+            ),
         ):
-            mock_cls.return_value = self._mock_robots(True)
             page = scrape_url(url)
         assert page.fingerprint == fingerprint(url)
 
     def test_artifact_urls_detected(self) -> None:
         html = _html("event_with_pdf.html")
         with (
-            patch("artlake.scrape.pages.RobotFileParser") as mock_cls,
             patch("artlake.scrape.pages.fetch_llms_txt", return_value=None),
-            patch("artlake.scrape.pages.fetch_html", return_value=html),
+            patch("artlake.scrape.pages.fetch_html", return_value=(html, None)),
         ):
-            mock_cls.return_value = self._mock_robots(True)
             page = scrape_url("https://example.com/event")
         assert len(page.artifact_urls) > 0
 
@@ -277,10 +280,10 @@ class TestScrapeUrl:
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = requests.HTTPError(str(status_code))
         with (
-            patch("artlake.scrape.pages.RobotFileParser") as mock_cls,
             patch("artlake.scrape.pages.fetch_llms_txt", return_value=None),
             patch("artlake.scrape.pages.requests.get", return_value=mock_resp),
         ):
-            mock_cls.return_value = self._mock_robots(True)
             page = scrape_url("https://example.com/event")
         assert page.processing_status == ProcessingStatus.FAILED
+        assert page.error is not None
+        assert "HTTPError" in page.error

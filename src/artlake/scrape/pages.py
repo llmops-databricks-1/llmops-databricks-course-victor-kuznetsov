@@ -57,8 +57,8 @@ def fetch_llms_txt(url: str, timeout: int = _TIMEOUT) -> str | None:
     return None
 
 
-def fetch_html(url: str, timeout: int = _TIMEOUT) -> str | None:
-    """Fetch raw HTML from *url*; return None on any error."""
+def fetch_html(url: str, timeout: int = _TIMEOUT) -> tuple[str | None, str | None]:
+    """Fetch raw HTML from *url*; return (html, error_message)."""
     try:
         resp = requests.get(
             url,
@@ -66,10 +66,11 @@ def fetch_html(url: str, timeout: int = _TIMEOUT) -> str | None:
             timeout=timeout,
         )
         resp.raise_for_status()
-        return str(resp.text)
+        return str(resp.text), None
     except requests.RequestException as exc:
-        logger.warning("Failed to fetch {}: {}", url, exc)
-        return None
+        error = f"{type(exc).__name__}: {exc}"
+        logger.warning("Failed to fetch {}: {}", url, error)
+        return None, error
 
 
 def extract_from_html(html: str, base_url: str) -> tuple[str, str, list[str]]:
@@ -108,11 +109,14 @@ def extract_from_html(html: str, base_url: str) -> tuple[str, str, list[str]]:
     return title, raw_text, list(dict.fromkeys(artifact_urls))
 
 
-def scrape_url(url: str, timeout: int = _TIMEOUT) -> ScrapedPage:
+def scrape_url(
+    url: str, timeout: int = _TIMEOUT, respect_robots: bool = False
+) -> ScrapedPage:
     """Fetch *url* and return a ScrapedPage (never raises)."""
     fp = fingerprint(url)
+    robots_allowed = is_allowed_by_robots(url, timeout=timeout)
 
-    if not is_allowed_by_robots(url, timeout=timeout):
+    if respect_robots and not robots_allowed:
         logger.info("robots.txt disallows: {}", url)
         return ScrapedPage(
             fingerprint=fp,
@@ -121,6 +125,7 @@ def scrape_url(url: str, timeout: int = _TIMEOUT) -> ScrapedPage:
             raw_text="",
             artifact_urls=[],
             processing_status=ProcessingStatus.FAILED,
+            robots_allowed=False,
             error="robots.txt disallows this URL",
         )
 
@@ -133,9 +138,10 @@ def scrape_url(url: str, timeout: int = _TIMEOUT) -> ScrapedPage:
             raw_text=llms_content,
             artifact_urls=[],
             processing_status=ProcessingStatus.NEW,
+            robots_allowed=robots_allowed,
         )
 
-    html = fetch_html(url, timeout=timeout)
+    html, fetch_error = fetch_html(url, timeout=timeout)
     if html is None:
         return ScrapedPage(
             fingerprint=fp,
@@ -144,7 +150,8 @@ def scrape_url(url: str, timeout: int = _TIMEOUT) -> ScrapedPage:
             raw_text="",
             artifact_urls=[],
             processing_status=ProcessingStatus.FAILED,
-            error="failed to fetch page",
+            robots_allowed=robots_allowed,
+            error=fetch_error,
         )
 
     title, raw_text, artifact_urls = extract_from_html(html, url)
@@ -158,6 +165,7 @@ def scrape_url(url: str, timeout: int = _TIMEOUT) -> ScrapedPage:
         raw_text=raw_text,
         artifact_urls=artifact_urls,
         processing_status=ProcessingStatus.NEW,
+        robots_allowed=robots_allowed,
     )
 
 
@@ -202,18 +210,45 @@ def run_list(
     return urls
 
 
-def run_scrape(url: str, scraped_pages_table: str, env: str = "dev") -> None:
+def run_scrape(
+    url: str,
+    scraped_pages_table: str,
+    env: str = "dev",
+    respect_robots: bool = False,
+) -> None:
     """Scrape a single URL and write the result to *scraped_pages_table*."""
     from pyspark.sql import SparkSession
 
     spark = SparkSession.builder.getOrCreate()
 
-    page = scrape_url(url)
+    page = scrape_url(url, respect_robots=respect_robots)
 
-    row = page.model_dump()
-    row["url"] = str(row["url"])
+    from pyspark.sql.types import (
+        ArrayType,
+        BooleanType,
+        StringType,
+        StructField,
+        StructType,
+    )
 
-    df = spark.createDataFrame([row])
+    schema = StructType(
+        [
+            StructField("fingerprint", StringType(), False),
+            StructField("url", StringType(), False),
+            StructField("title", StringType(), False),
+            StructField("raw_text", StringType(), False),
+            StructField("artifact_urls", ArrayType(StringType()), False),
+            StructField("processing_status", StringType(), False),
+            StructField("robots_allowed", BooleanType(), True),
+            StructField("error", StringType(), True),
+            StructField("scraped_at", StringType(), False),
+        ]
+    )
+
+    row = page.model_dump(mode="json")
+    row["scraped_at"] = str(row["scraped_at"])
+
+    df = spark.createDataFrame([row], schema=schema)
 
     parts = scraped_pages_table.split(".")
     if len(parts) == 3:
@@ -267,7 +302,15 @@ def main() -> None:
         default="dev",
         help="Deployment environment (dev/tst/acc/prd)",
     )
+    parser.add_argument(
+        "--respect-robots",
+        action="store_true",
+        default=False,
+        help="Honour robots.txt restrictions (default: ignore)",
+    )
     args = parser.parse_args()
+
+    respect_robots = args.respect_robots
 
     if args.mode == "list":
         run_list(
@@ -282,4 +325,5 @@ def main() -> None:
             url=args.url,
             scraped_pages_table=args.scraped_pages_table,
             env=args.env,
+            respect_robots=respect_robots,
         )

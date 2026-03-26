@@ -17,6 +17,7 @@ class ProcessingStatus(StrEnum):
     PROCESSING = "processing"
     DONE = "done"
     FAILED = "failed"
+    OUTDATED = "outdated"
 
 
 class RawEvent(BaseModel):
@@ -51,7 +52,9 @@ class CleanEvent(BaseModel):
     language: str
     source: str
     url: HttpUrl
+    artifact_urls: list[str] = []
     artifact_paths: list[str] = []
+    processing_status: ProcessingStatus = ProcessingStatus.NEW
     ingested_at: datetime = Field(default_factory=_now)
 
 
@@ -114,5 +117,6 @@ class ScrapedPage(BaseModel):
     raw_text: str
     artifact_urls: list[str] = []
     processing_status: ProcessingStatus = ProcessingStatus.NEW
+    robots_allowed: bool | None = None
     error: str | None = None
     scraped_at: datetime = Field(default_factory=_now)

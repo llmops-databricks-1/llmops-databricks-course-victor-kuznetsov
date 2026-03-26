@@ -25,8 +25,6 @@ resources:
               - "artlake.staging.seen_urls"
               - "--scraped-pages-table"
               - "artlake.staging.scraped_pages"
-              - "--limit"
-              - "10"
               - "--env"
               - "${bundle.target}"
 
@@ -35,8 +33,10 @@ resources:
             - task_key: list_urls
           for_each_task:
             inputs: "{{tasks.list_urls.values.urls}}"
+            concurrency: 10
             task:
               task_key: scrape_page_iteration
+              max_retries: 0
               environment_key: default
               python_wheel_task:
                 entry_point: artlake-scrape-pages
