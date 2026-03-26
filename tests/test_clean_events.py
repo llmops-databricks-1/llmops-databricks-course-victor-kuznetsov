@@ -9,8 +9,10 @@ import pytest
 from pydantic import HttpUrl
 
 from artlake.clean.events import (
+    _clean_title,
     _fields_complete,
     _merge_fields,
+    _normalize_text,
     _parse_llm_date,
     _source_from_url,
     clean_page,
@@ -137,6 +139,21 @@ class TestExtractFieldsRuleBased:
         fields = extract_fields_rule_based(page)
         assert fields["title"] == "Open Call 2025"
 
+    def test_strips_title_site_suffix(self) -> None:
+        page = _page(title="Open Call | Gallery Brussels", raw_text="Some text.")
+        fields = extract_fields_rule_based(page)
+        assert fields["title"] == "Open Call"
+
+    def test_normalizes_description_whitespace(self) -> None:
+        page = _page(raw_text="  Art   event  \n\t details  here  ")
+        fields = extract_fields_rule_based(page)
+        assert fields["description"] == "Art event details here"
+
+    def test_decodes_html_entities_in_description(self) -> None:
+        page = _page(raw_text="Open call for Art &amp; Design enthusiasts.")
+        fields = extract_fields_rule_based(page)
+        assert fields["description"] == "Open call for Art & Design enthusiasts."
+
     def test_fallback_to_first_line_when_no_title(self) -> None:
         page = _page(title="", raw_text="Art Market Brussels\nMore text here.")
         fields = extract_fields_rule_based(page)
@@ -239,6 +256,53 @@ class TestExtractFieldsLlm:
 # ---------------------------------------------------------------------------
 # _fields_complete / _merge_fields / helpers
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Text normalisation helpers
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeText:
+    def test_collapses_whitespace(self) -> None:
+        assert _normalize_text("hello   world\t\nfoo") == "hello world foo"
+
+    def test_decodes_html_entities(self) -> None:
+        assert _normalize_text("Art &amp; Culture") == "Art & Culture"
+        assert _normalize_text("open&#39;call") == "open'call"
+
+    def test_normalizes_unicode_nfkc(self) -> None:
+        # Ligature fi → f + i
+        assert _normalize_text("\ufb01ne art") == "fine art"
+
+    def test_strips_leading_trailing(self) -> None:
+        assert _normalize_text("  hello  ") == "hello"
+
+    def test_empty_string(self) -> None:
+        assert _normalize_text("") == ""
+
+
+class TestCleanTitle:
+    def test_strips_pipe_suffix(self) -> None:
+        assert _clean_title("Open Call | Gallery Brussels") == "Open Call"
+
+    def test_strips_dash_suffix(self) -> None:
+        assert _clean_title("Summer Exhibition - Stedelijk Museum") == "Summer Exhibition"
+
+    def test_strips_en_dash_suffix(self) -> None:
+        assert _clean_title("Art Fair – Amsterdam") == "Art Fair"
+
+    def test_strips_em_dash_suffix(self) -> None:
+        assert _clean_title("Residency — Berlin Art Week") == "Residency"
+
+    def test_no_suffix_unchanged(self) -> None:
+        assert _clean_title("Open Call for Artists") == "Open Call for Artists"
+
+    def test_normalizes_whitespace(self) -> None:
+        assert _clean_title("  Open   Call  ") == "Open Call"
+
+    def test_decodes_html_entities(self) -> None:
+        assert _clean_title("Art &amp; Design | Museum") == "Art & Design"
 
 
 class TestHelpers:

@@ -12,8 +12,10 @@ Extraction funnel per page:
 
 from __future__ import annotations
 
+import html
 import json
 import re
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
@@ -118,6 +120,29 @@ def is_outdated(date_start: datetime | None, date_end: datetime | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Text normalisation
+# ---------------------------------------------------------------------------
+
+# Site-name suffix patterns: "Title | Gallery", "Title - Site", "Title – Brand"
+_TITLE_SUFFIX_RE = re.compile(r"\s*[|\-–—]\s*.+$")
+
+
+def _normalize_text(text: str) -> str:
+    """Decode HTML entities, normalize unicode (NFKC), collapse whitespace."""
+    text = html.unescape(text)
+    text = unicodedata.normalize("NFKC", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _clean_title(title: str) -> str:
+    """Normalize title and strip common site-name suffixes (| … / - … / – …)."""
+    title = _normalize_text(title)
+    title = _TITLE_SUFFIX_RE.sub("", title).strip()
+    return title
+
+
+# ---------------------------------------------------------------------------
 # Rule-based field extraction
 # ---------------------------------------------------------------------------
 
@@ -136,22 +161,28 @@ def extract_fields_rule_based(page: ScrapedPage) -> dict[str, str | None]:
     """Extract title, description, and location_text using heuristics.
 
     Returns a dict with string-or-None values for each field.
+    All extracted strings are normalised (HTML entities decoded, unicode
+    normalised, whitespace collapsed).
     """
-    title: str | None = page.title.strip() if page.title else None
+    title: str | None = _clean_title(page.title) if page.title else None
 
     # Fallback: first meaningful line of raw_text
     if not title and page.raw_text:
         for line in page.raw_text.splitlines():
-            stripped = line.strip()
+            stripped = _normalize_text(line)
             if len(stripped) > 10:
-                title = stripped[:200]
+                title = _clean_title(stripped[:200])
                 break
 
     description: str | None = None
     if page.raw_text:
-        description = page.raw_text[:500].strip() or None
+        raw = _normalize_text(page.raw_text[:500])
+        description = raw or None
 
-    location_text = _extract_location(page.raw_text) if page.raw_text else None
+    location_text: str | None = None
+    if page.raw_text:
+        raw_loc = _extract_location(page.raw_text)
+        location_text = _normalize_text(raw_loc) if raw_loc else None
 
     return {"title": title, "description": description, "location_text": location_text}
 
