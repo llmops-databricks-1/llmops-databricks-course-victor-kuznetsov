@@ -413,10 +413,10 @@ def run_clean(  # pragma: no cover
             raw_text=row["raw_text"] or "",
             artifact_urls=list(row["artifact_urls"] or []),
             processing_status=ProcessingStatus(row["processing_status"]),
-            robots_allowed=row.get("robots_allowed"),
-            error=row.get("error"),
+            robots_allowed=row["robots_allowed"],
+            error=row["error"],
         )
-        language = row.get("language") or "unknown"
+        language = row["language"] or "unknown"
         event = clean_page(page, language, client, model)
         r = event.model_dump(mode="json")
         r["url"] = str(r["url"])
