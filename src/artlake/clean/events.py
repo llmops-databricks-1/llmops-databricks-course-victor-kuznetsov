@@ -418,7 +418,8 @@ def run_clean(  # pragma: no cover
         )
         language = row["language"] or "unknown"
         event = clean_page(page, language, client, model)
-        r = event.model_dump(mode="json")
+        # mode="python" preserves datetime objects — required for TimestampType columns
+        r = event.model_dump(mode="python")
         r["url"] = str(r["url"])
         r["ingested_at"] = str(r["ingested_at"])
         clean_rows.append(r)
