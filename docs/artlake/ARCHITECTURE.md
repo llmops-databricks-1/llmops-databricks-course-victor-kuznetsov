@@ -78,7 +78,8 @@ Orchestrated as **Databricks Workflows**. Each step is a `.whl` entry point exec
 - **Search** (`artlake-search`, `artlake-search-social`) — reads pre-generated `queries.yml` and executes each query via `duckduckgo-search`. Results tagged with query language. Country names already included in queries (from generation step).
 - **Dedup + Seen-URL Tracking** (`artlake-dedup`) — fingerprints each URL with `sha2(url, 256)` and anti-joins against `artlake.staging.seen_urls`. Writes only unseen URLs to `seen_urls`, making it a persistent set across pipeline runs. Supports art aggregators where the domain is the same but event paths differ (each path produces a distinct hash).
 - **Page Scraper** (`artlake-scrape-pages`) — Two-mode entry point. `--mode list` anti-joins `seen_urls` against `scraped_pages` on `fingerprint` and emits the unseen URL list as a Databricks task value, feeding a `for_each_task` for per-URL parallelism and observability. `--mode scrape` fetches a single URL: checks `robots.txt` (stdlib `urllib.robotparser`), tries `/<domain>/llms.txt` first (higher-quality structured content where available), falls back to `requests` + BeautifulSoup raw HTML. Stores raw content only — title, body text, hrefs, artifact URLs. `fingerprint` written as PK. Date/location extraction deferred to downstream steps. Upgrade path: SerpAPI (paid) when JS-rendered pages or richer content extraction is needed.
-- **Clean Events** (`artlake-clean-events`) — reads `scraped_pages` (`processing_status = 'new'`), parses dates, normalises fields, writes `CleanEvent` records to `artlake.bronze.raw_events`. Sets `processing_status = 'outdated'` for events whose end date (or start date if no end) is in the past — skipping geocoding, artifact download, and translation for stale events. Sets `processing_status = 'new'` otherwise.
+- **Language Pattern Generation** (`artlake-generate-language-patterns`) — reads `config/input/keywords.yml`, calls LLM once to generate multilingual field-label patterns (title labels, location labels per language), writes `config/output/language_patterns.yml`. Re-run only when `keywords.yml` changes. Mirrors the `artlake-generate-queries` pattern.
+- **Clean Events** (`artlake-clean-events`) — two-mode entry point using `for_each_task` parallelism (mirrors `artlake-scrape-pages`). `--mode list` reads `scraped_pages` (`processing_status = 'new'`) and emits the URL list as a Databricks task value. `--mode clean --url <url>` processes one page: parses dates, normalises fields via rule-based extraction (using `language_patterns.yml` for multilingual field labels) with LLM fallback, writes one `CleanEvent` to `artlake.bronze.raw_events`. Sets `processing_status = 'outdated'` for past events, `requires_manual_validation` when extraction fails, `new` otherwise.
 - **Country Filter** (`artlake-geocode`) — reads `raw_events` (`processing_status = 'new'`), resolves location text → lat/lng/country via Nominatim (ADR-003). Keeps events in `target_countries`; sets `processing_status = 'done'` on accepted, `processing_status = 'failed'` on unresolvable locations (country kept as `'unknown'`). Lat/lng stored for future Phase 3 BI radius filtering (ADR-013).
 - **Artifact Downloader** (`artlake-download-artifacts`) — reads `artifact_urls` from `raw_events` (`processing_status = 'done'`), downloads PDFs and images to Unity Catalog Volumes.
 
@@ -88,16 +89,18 @@ Orchestrated as **Databricks Workflows**. Each step is a `.whl` entry point exec
 
 | Layer | Table | Content |
 |---|---|---|
-| Staging | `artlake.staging.search_results` | Raw search results, tagged with query language and source. |
+| Staging | `artlake.staging.search_results` | Raw search results, tagged with query language and source. `fingerprint` (sha2 of URL). |
 | Staging | `artlake.staging.seen_urls` | All URLs written by dedup — presence = seen. Persists across runs. Schema: url, title, source, fingerprint (sha2), ingested_at. |
 | Staging | `artlake.staging.scraped_pages` | Raw page content (title, body text, hrefs), artifact URLs. `fingerprint` (sha2, PK). `processing_status` column. |
 | Staging | `artlake.staging.artifacts` | Artifact metadata and UC Volume file paths. `processing_status` column. |
-| Bronze | `artlake.bronze.raw_events` | Structured clean events (title, description, dates, location, lat/lng, country, language, source, url) — original language |
+| Bronze | `artlake.bronze.raw_events` | Structured clean events (title, description, dates, location, lat/lng, country, language, source, url, `fingerprint`). `fingerprint` = sha2(url, 256) — consistent join key across all tables. |
 | Bronze | `artlake.bronze.translated_events` | Events translated to configured language (default: English) |
 | Gold | `artlake.gold.events` | Categorised (open_call / market / exhibition / workshop / other), enriched with artifact summaries |
 | Gold | `artlake.gold.embeddings` | Vector embeddings for semantic search (Delta Sync to Vector Search) — from translated content |
 
-**`processing_status`** — used on staging tables for expensive operations (`scraped_pages`, `artifacts`) to track row-level progress: `new` → `processing` → `done` | `failed`. Not used on `search_results` or `seen_urls` — those tables use simpler coordination (anti-join on `seen_urls`, presence in `scraped_pages`).
+**`processing_status`** — used on staging and bronze tables for expensive operations (`scraped_pages`, `artifacts`, `raw_events`) to track row-level progress: `new` → `processing` → `done` | `failed` | `outdated` | `requires_manual_validation`. Not used on `search_results` or `seen_urls` — those tables use simpler coordination (anti-join on `seen_urls`, presence in `scraped_pages`).
+
+**`fingerprint`** — `sha2(url, 256)` present on all tables as a consistent join key for BI and cross-table analysis. Computed from the canonical URL at write time.
 
 ### Processing Layer
 

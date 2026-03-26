@@ -47,7 +47,8 @@ src/artlake/
 │   └── country.py           #   Geocoding + country filter         → artlake-geocode
 │
 ├── clean/                   # Raw → structured field extraction
-│   └── events.py            #   Parse dates, normalise fields      → artlake-clean-events
+│   ├── events.py            #   Parse dates, normalise fields      → artlake-clean-events
+│   └── patterns.py          #   Generate multilingual field-label patterns via LLM → artlake-generate-language-patterns
 │
 ├── categorise/              # Event type classification
 │   ├── rules.py             #   Keyword-based (multilingual)       → artlake-categorise-rules
@@ -88,7 +89,7 @@ Used on `scraped_pages` and `artifacts`. Downstream tasks read rows where upstre
 **Ingestion workflow:**
 ```
 artlake-generate-queries → artlake-search → artlake-search-social → artlake-dedup → artlake-scrape-pages
-→ artlake-clean-events → artlake-geocode → artlake-download-artifacts
+→ artlake-generate-language-patterns → artlake-clean-events (for_each) → artlake-geocode → artlake-download-artifacts
 ```
 
 **Processing workflow:**
@@ -111,8 +112,8 @@ artlake-translate → artlake-process-artifacts → artlake-categorise-rules →
 **Modules:** `models/event.py`, `models/config.py`
 
 **Models:**
-- `RawEvent` — url, title, snippet, source, raw_html, scraped_at, language (from query), artifact_urls
-- `CleanEvent` — title, description, date_start, date_end, location_text, lat, lng, country, language, source, url, artifact_paths
+- `RawEvent` — fingerprint (sha2), url, title, snippet, source, raw_html, scraped_at, language (from query), artifact_urls
+- `CleanEvent` — fingerprint (sha2), title, description, date_start, date_end, location_text, lat, lng, country, language, source, url, artifact_urls, artifact_paths
 - `GoldEvent` — extends CleanEvent with category, artifact_summaries
 - `EventArtifact` — url, artifact_type (pdf/image), file_path, extracted_text, llm_summary
 - `SeenUrl` — url, title, source, fingerprint (sha2(url, 256)), ingested_at
@@ -289,25 +290,34 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 ### 1.9 — Clean events (raw → structured) — [#15](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/15)
 
-**Module:** `clean/events.py` → `artlake-clean-events`
+**Modules:**
+- `clean/patterns.py` → `artlake-generate-language-patterns` — reads `keywords.yml`, calls LLM once to generate multilingual field-label patterns, writes `config/output/language_patterns.yml`.
+- `clean/events.py` → `artlake-clean-events` — two-mode entry point with `for_each_task` parallelism.
 
 **Behaviour:**
-- Read from `artlake.staging.scraped_pages` where `processing_status = 'new'`
-- Parse dates (ISO, natural language, European dd/mm/yyyy)
-- Normalise titles, descriptions, location text
-- Copy `artifact_urls` from `scraped_pages` to `CleanEvent`
-- Write `CleanEvent` records to `artlake.bronze.raw_events`:
-  - `processing_status = 'outdated'` if `date_end < today` (or `date_start < today` when no end date)
-  - `processing_status = 'new'` otherwise (including events with no detected date)
+- `artlake-generate-language-patterns`: derive languages/target_countries from `keywords.yml`, call LLM for title/location field labels per language, write `language_patterns.yml` (mirrors `artlake-generate-queries` pattern)
+- `artlake-clean-events --mode list`: anti-join `scraped_pages` (`processing_status = 'new'`) and emit URL list as Databricks task value for `for_each_task`
+- `artlake-clean-events --mode clean --url <url>`: process one page per for_each iteration:
+  - Parse dates (ISO, natural language, European dd/mm/yyyy)
+  - Normalise title, description, location via rule-based extraction (using `language_patterns.yml` field labels per language)
+  - LLM fallback when fields are incomplete
+  - Copy `artifact_urls` and `fingerprint` from `scraped_pages` to `CleanEvent`
+  - Write to `artlake.bronze.raw_events`:
+    - `processing_status = 'outdated'` if `date_end < today`
+    - `processing_status = 'requires_manual_validation'` if extraction fails after LLM
+    - `processing_status = 'new'` otherwise
 
 **Acceptance criteria:**
-- [ ] Date parsing handles ISO, natural language, European dd/mm/yyyy formats
-- [ ] Events with past dates written with `processing_status = 'outdated'`
-- [ ] Events with no detected date written with `processing_status = 'new'`
-- [ ] Null handling for missing fields (description, dates, coordinates)
-- [ ] Unit tests for each parsing function
+- [x] Date parsing handles ISO, natural language, European dd/mm/yyyy formats
+- [x] Events with past dates written with `processing_status = 'outdated'`
+- [x] Events with no detected date written with `processing_status = 'new'`
+- [x] Null handling for missing fields (description, dates, coordinates)
+- [x] Unit tests for each parsing function
 - [ ] Integration test for Delta write (`@pytest.mark.integration`)
-- [ ] Entry point `artlake-clean-events` declared in `pyproject.toml`
+- [x] Entry point `artlake-clean-events` declared in `pyproject.toml`
+- [x] Entry point `artlake-generate-language-patterns` declared in `pyproject.toml`
+- [x] `for_each_task` pattern in `resources/clean_events_job.yml`
+- [x] `fingerprint` propagated from `scraped_pages` to `raw_events`
 
 ---
 

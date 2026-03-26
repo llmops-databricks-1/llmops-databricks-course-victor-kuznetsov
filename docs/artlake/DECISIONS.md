@@ -330,24 +330,25 @@ client = OpenAI(
 
 ## ADR-023 · Clean Events — Multi-Language Extraction Funnel
 
-**Decision**: Parse scraped pages into structured `CleanEvent` records using a **cost-reducing funnel**: rule-based date parsing → early outdated filter → rule-based field extraction → cheap LLM fallback → `requires_manual_validation` if still incomplete.
+**Decision**: Parse scraped pages into structured `CleanEvent` records using a **cost-reducing funnel**: rule-based date parsing → early outdated filter → rule-based field extraction (driven by LLM-generated `language_patterns.yml`) → cheap LLM fallback → `requires_manual_validation` if still incomplete. Uses `for_each_task` for per-URL parallelism (mirrors `artlake-scrape-pages` pattern).
 
 **Rationale**:
 
 - Scraped pages arrive in any language (EN/NL/DE/FR) and any format — a purely rule-based approach cannot handle all cases, but calling an LLM on every page is wasteful.
 - Filtering outdated events early (before LLM calls) prevents paying for compute on stale data. Events with no detected date are assumed ongoing and pass through.
 - `dateparser` (open-source, 200+ languages) handles ISO, European `dd/mm/yyyy`, and natural-language date formats in all target languages. No API cost.
-- Rule-based field extraction (title from scraped `<title>`, description from first 500 chars, location via keyword regex) covers the majority of well-structured pages for free.
+- Rule-based field extraction uses a **generated `language_patterns.yml`** (via `artlake-generate-language-patterns`, see ADR-024) for multilingual field labels — no hardcoded constants that would silently break when target languages change.
 - LLM fallback (Databricks FM — `databricks-meta-llama-3-3-70b-instruct`, cheap + Databricks-native) is called only when rule-based extraction leaves fields incomplete. LLM also fills date gaps and re-checks outdated status after filling.
 - Records where even the LLM cannot extract structured fields are marked `requires_manual_validation` — visible for human review without blocking the pipeline.
 - Language is resolved by joining `scraped_pages` with `staging.search_results` on `url`; defaults to `"unknown"` when missing. Downstream `artlake-translate` handles the `"unknown"` case.
+- `for_each_task` gives per-URL observability and retry granularity in the Databricks job UI (same rationale as ADR-022).
 
 **Processing status added**: `requires_manual_validation` — new value in `ProcessingStatus` enum, alongside `new`, `processing`, `done`, `failed`, `outdated`.
 
 **Funnel steps**:
-1. `parse_dates(raw_text)` — `dateparser.search.search_dates`, multi-language, filters dates > 2 years old (publication/copyright noise).
+1. `parse_dates(raw_text, languages)` — `dateparser.search.search_dates`, multi-language, filters dates > 100 years old (publication/copyright noise).
 2. `is_outdated(date_start, date_end)` → write `CleanEvent(processing_status='outdated')`, skip LLM.
-3. `extract_fields_rule_based(page)` — title, description, location via regex.
+3. `extract_fields_rule_based(page, title_re, location_re)` — title (labeled field → `<title>` tag → first line), description from first 500 chars, location via keyword regex built from `language_patterns.yml`.
 4. `extract_fields_llm(page, client, model)` — called only when fields incomplete; also fills date gaps and re-checks outdated.
 5. `requires_manual_validation` if still incomplete after LLM.
 
@@ -355,6 +356,38 @@ client = OpenAI(
 - LLM-only extraction on every page — unnecessary cost at scale; dateparser covers the majority of date formats for free.
 - Separate language detection step — search queries already control language (ADR-004); `"unknown"` fallback is sufficient for this step.
 - Single-pass rule-based only — fails on non-English / non-structured pages.
+- Hardcoded language constants (`_LANGUAGES`, `_TLD_COUNTRY`) — silently break when target languages/countries change; replaced by `language_patterns.yml` (ADR-024).
+
+---
+
+## ADR-024 · Language Pattern Generation
+
+**Decision**: Generate multilingual field-label patterns (`language_patterns.yml`) via LLM from `keywords.yml` as a **pre-processing step** before `artlake-clean-events`. Single LLM call produces all `title_keywords` and `location_keywords` per target language. Mirrors the `artlake-generate-queries` pattern.
+
+**Rationale**:
+- `artlake-clean-events` needs per-language field labels (e.g. `"Titel:"`, `"Locatie:"`) to find structured content on pages — these cannot be hardcoded without risking silent breakage when languages change.
+- Deriving labels from `keywords.yml` (which already lists all target languages and countries) ensures the patterns stay in sync with the pipeline configuration automatically.
+- One LLM call at the job level amortises the cost over all per-URL iterations; calling the LLM per page for label generation would be wasteful.
+- The pattern file is written to the workspace shared path (`${var.config_root}/config/output/`) via DAB, so all concurrent `for_each_task` iterations read it without contention.
+
+**Output** (`language_patterns.yml`):
+```yaml
+languages: [en, nl, de, fr]
+target_countries: [NL, BE, DE, FR]
+title_keywords:
+  en: [Title, Event, Name]
+  nl: [Titel, Evenement, Naam]
+  ...
+location_keywords:
+  en: [Location, Venue, Address, Place]
+  nl: [Locatie, Adres]
+  ...
+```
+
+**Rejected**:
+- Hardcoded module-level constants — silently stale when languages/countries change.
+- Reading `keywords.yml` directly in `clean_events` — adds config-parsing complexity to a task already responsible for extraction; violates single-responsibility principle.
+- Per-URL LLM calls for label generation — wasteful; labels don't change between pages.
 
 ---
 
