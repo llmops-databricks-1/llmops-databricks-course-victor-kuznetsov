@@ -325,6 +325,7 @@ def _make_clean_event(
     target_countries: list[str],
 ) -> CleanEvent:
     return CleanEvent(
+        fingerprint=page.fingerprint,
         title=fields.get("title") or page.title or str(page.url),
         description=fields.get("description") or "",
         date_start=date_start,
@@ -460,6 +461,7 @@ def _clean_event_schema() -> StructType:  # pragma: no cover
 
     return StructType(
         [
+            StructField("fingerprint", StringType(), False),
             StructField("title", StringType(), False),
             StructField("description", StringType(), False),
             StructField("date_start", TimestampType(), True),

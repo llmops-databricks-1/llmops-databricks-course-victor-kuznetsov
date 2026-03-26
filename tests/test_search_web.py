@@ -207,6 +207,7 @@ class TestWriteResults:
         from artlake.search.web import write_results
 
         event = RawEvent(
+            fingerprint="abc123",
             url="https://example.com/event",  # type: ignore[arg-type]
             title="Test Event",
             snippet="A snippet.",
@@ -268,6 +269,7 @@ class TestMain:
         mock_queries = [_QUERY_NL]
         mock_events = [
             RawEvent(
+                fingerprint="abc123",
                 url="https://example.com/event",  # type: ignore[arg-type]
                 title="Test",
                 snippet="snippet",
@@ -303,6 +305,7 @@ class TestMain:
         queries = [_QUERY_NL, _QUERY_DE]
         batch_events = [
             RawEvent(
+                fingerprint=f"fp{i}",
                 url=f"https://example.com/{i}",  # type: ignore[arg-type]
                 title=f"Event {i}",
                 snippet="snippet",

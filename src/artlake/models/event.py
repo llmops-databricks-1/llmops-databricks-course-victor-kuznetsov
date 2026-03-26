@@ -26,6 +26,7 @@ class RawEvent(BaseModel):
 
     model_config = ConfigDict(strict=True)
 
+    fingerprint: str
     url: HttpUrl
     title: str
     snippet: str
@@ -42,6 +43,7 @@ class CleanEvent(BaseModel):
 
     model_config = ConfigDict(strict=True)
 
+    fingerprint: str
     title: str
     description: str
     date_start: datetime | None = None

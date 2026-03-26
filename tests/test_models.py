@@ -23,6 +23,7 @@ from artlake.models import (
 class TestRawEvent:
     def test_valid_minimal(self) -> None:
         event = RawEvent(
+            fingerprint="abc123",
             url="https://example.com/event",
             title="Open Call",
             snippet="Apply now",
@@ -34,6 +35,7 @@ class TestRawEvent:
 
     def test_valid_full(self) -> None:
         event = RawEvent(
+            fingerprint="abc123",
             url="https://example.com/event",
             title="Open Call",
             snippet="Apply now",
@@ -48,6 +50,7 @@ class TestRawEvent:
     def test_invalid_url(self) -> None:
         with pytest.raises(ValidationError):
             RawEvent(
+                fingerprint="abc123",
                 url="not-a-url",
                 title="Open Call",
                 snippet="Apply now",
@@ -58,6 +61,7 @@ class TestRawEvent:
     def test_missing_required_field(self) -> None:
         with pytest.raises(ValidationError):
             RawEvent(
+                fingerprint="abc123",
                 url="https://example.com/event",
                 title="Open Call",
                 # missing snippet, source, language
@@ -72,6 +76,7 @@ class TestRawEvent:
 class TestCleanEvent:
     def test_valid(self) -> None:
         event = CleanEvent(
+            fingerprint="abc123",
             title="Art Market",
             description="Annual art market in Amsterdam",
             location_text="Amsterdam, Netherlands",
@@ -85,6 +90,7 @@ class TestCleanEvent:
 
     def test_with_dates_and_geo(self) -> None:
         event = CleanEvent(
+            fingerprint="abc123",
             title="Art Market",
             description="Annual art market",
             date_start=datetime(2026, 6, 1, tzinfo=UTC),
