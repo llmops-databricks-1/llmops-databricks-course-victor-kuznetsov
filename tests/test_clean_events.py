@@ -10,7 +10,9 @@ from pydantic import HttpUrl
 
 from artlake.clean.events import (
     _clean_title,
+    _country_from_url,
     _fields_complete,
+    _looks_like_html,
     _merge_fields,
     _normalize_text,
     _parse_llm_date,
@@ -96,6 +98,14 @@ class TestParseDates:
         # 1985 should be filtered out as > 2 years old
         assert start is not None
         assert start.year == 2099
+
+    def test_filters_absurd_future_dates(self) -> None:
+        # Year 9816 (dateparser artefact) should be filtered out
+        text = "Event on 2027-06-01. Copyright 9816."
+        start, end = parse_dates(text)
+        assert start is not None
+        assert start.year == 2027
+        assert end is None
 
     def test_empty_text(self) -> None:
         start, end = parse_dates("")
@@ -183,6 +193,12 @@ class TestExtractFieldsRuleBased:
     def test_no_location_returns_none(self) -> None:
         page = _page(raw_text="Join us for the event. Great fun ahead.")
         fields = extract_fields_rule_based(page)
+        assert fields["location_text"] is None
+
+    def test_html_raw_text_forces_none_fields(self) -> None:
+        page = _page(raw_text="<!DOCTYPE html><html><body>Maintenance</body></html>")
+        fields = extract_fields_rule_based(page)
+        assert fields["description"] is None
         assert fields["location_text"] is None
 
     def test_empty_page(self) -> None:
@@ -333,6 +349,29 @@ class TestHelpers:
 
     def test_source_from_url(self) -> None:
         assert _source_from_url("https://example.com/event/123") == "example.com"
+
+    def test_country_from_url_known_tld(self) -> None:
+        countries = ["NL", "BE", "DE", "FR", "LU"]
+        assert _country_from_url("https://gallery.nl/event", countries) == "NL"
+        assert _country_from_url("https://museum.be/expo", countries) == "BE"
+        assert _country_from_url("https://kunst.de/aufruf", countries) == "DE"
+        assert _country_from_url("https://art.fr/appel", countries) == "FR"
+        assert _country_from_url("https://opc-luxembourg.lu/de/", countries) == "LU"
+
+    def test_country_from_url_unknown_tld(self) -> None:
+        countries = ["NL", "BE", "DE", "FR", "LU"]
+        assert _country_from_url("https://example.com/event", countries) is None
+        assert _country_from_url("https://artsy.org/show", countries) is None
+
+    def test_looks_like_html_doctype(self) -> None:
+        assert _looks_like_html("<!DOCTYPE html><html><body>text</body></html>")
+
+    def test_looks_like_html_tag(self) -> None:
+        assert _looks_like_html("<html lang='fr'><head></head></html>")
+
+    def test_looks_like_html_false_for_plain_text(self) -> None:
+        assert not _looks_like_html("Open call for artists in Brussels.")
+        assert not _looks_like_html("Location: Amsterdam")
 
 
 # ---------------------------------------------------------------------------

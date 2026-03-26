@@ -13,19 +13,57 @@ resources:
               - ../dist/*.whl
 
       tasks:
-        - task_key: clean_events
+        - task_key: list_urls
           environment_key: default
           python_wheel_task:
             entry_point: artlake-clean-events
             package_name: artlake
             parameters:
+              - "--mode"
+              - "list"
               - "--scraped-pages-table"
               - "artlake.staging.scraped_pages"
               - "--search-results-table"
               - "artlake.staging.search_results"
-              - "--raw-events-table"
-              - "artlake.bronze.raw_events"
-              - "--model"
-              - "databricks-meta-llama-3-3-70b-instruct"
               - "--env"
               - "${bundle.target}"
+
+        - task_key: clean_events
+          depends_on:
+            - task_key: list_urls
+          for_each_task:
+            inputs: "{{tasks.list_urls.values.urls}}"
+            concurrency: 10
+            task:
+              task_key: clean_event_iteration
+              max_retries: 1
+              environment_key: default
+              python_wheel_task:
+                entry_point: artlake-clean-events
+                package_name: artlake
+                parameters:
+                  - "--mode"
+                  - "clean"
+                  - "--url"
+                  - "{{input}}"
+                  - "--scraped-pages-table"
+                  - "artlake.staging.scraped_pages"
+                  - "--search-results-table"
+                  - "artlake.staging.search_results"
+                  - "--raw-events-table"
+                  - "artlake.bronze.raw_events"
+                  - "--model"
+                  - "databricks-meta-llama-3-3-70b-instruct"
+                  - "--env"
+                  - "${bundle.target}"
+                  - "--languages"
+                  - "en"
+                  - "nl"
+                  - "de"
+                  - "fr"
+                  - "--target-countries"
+                  - "NL"
+                  - "BE"
+                  - "DE"
+                  - "FR"
+                  - "LU"
