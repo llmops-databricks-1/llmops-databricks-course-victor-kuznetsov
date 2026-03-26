@@ -48,7 +48,8 @@ flowchart TD
         DASH["AI/BI Dashboards\n(event map · calendar · trends\ninteractive radius filtering)"]
     end
 
-    DDG & SOC & DS --> DEDUP --> SC --> ART_DL --> GEO --> CLEAN
+    DDG & SOC & DS --> DEDUP --> SC --> CLEAN --> GEO --> ART_DL
+    ART_DL --> STG
     CLEAN --> STG
     STG --> B
     B --> TRANS --> ART_PROC --> CAT --> GO
@@ -76,10 +77,10 @@ Orchestrated as **Databricks Workflows**. Each step is a `.whl` entry point exec
 - **Query generation** (`artlake-generate-queries`) — translates base English keywords to NL/DE/FR via LLM; writes `queries.yml` (bundled with DAB artifacts) with one query per language × category × country. Runs once before search; re-run only when keywords change.
 - **Search** (`artlake-search`, `artlake-search-social`) — reads pre-generated `queries.yml` and executes each query via `duckduckgo-search`. Results tagged with query language. Country names already included in queries (from generation step).
 - **Dedup + Seen-URL Tracking** (`artlake-dedup`) — fingerprints each URL with `sha2(url, 256)` and anti-joins against `artlake.staging.seen_urls`. Writes only unseen URLs to `seen_urls`, making it a persistent set across pipeline runs. Supports art aggregators where the domain is the same but event paths differ (each path produces a distinct hash).
-- **Page Scraper** (`artlake-scrape-pages`) — `requests` + BeautifulSoup for HTML content extraction. Detects PDF/image links (open call rules, posters, flyers). Upgrade path: SerpAPI (paid) when JS-rendered pages or richer content extraction is needed.
-- **Artifact Downloader** (`artlake-download-artifacts`) — downloads detected PDFs and images to Unity Catalog Volumes.
-- **Country Filter** (`artlake-geocode`) — resolves event location to lat/lng/country via Nominatim (ADR-003). Filters by configurable `target_countries`. Lat/lng stored for future BI-layer radius filtering. No radius filter at ingestion (ADR-013).
-- **Clean Events** (`artlake-clean-events`) — parses dates, normalises fields, writes structured `CleanEvent` records to Bronze.
+- **Page Scraper** (`artlake-scrape-pages`) — Two-mode entry point. `--mode list` anti-joins `seen_urls` against `scraped_pages` on `fingerprint` and emits the unseen URL list as a Databricks task value, feeding a `for_each_task` for per-URL parallelism and observability. `--mode scrape` fetches a single URL: checks `robots.txt` (stdlib `urllib.robotparser`), tries `/<domain>/llms.txt` first (higher-quality structured content where available), falls back to `requests` + BeautifulSoup raw HTML. Stores raw content only — title, body text, hrefs, artifact URLs. `fingerprint` written as PK. Date/location extraction deferred to downstream steps. Upgrade path: SerpAPI (paid) when JS-rendered pages or richer content extraction is needed.
+- **Clean Events** (`artlake-clean-events`) — reads `scraped_pages` (`processing_status = 'new'`), parses dates, normalises fields, writes `CleanEvent` records to `artlake.bronze.raw_events`. Sets `processing_status = 'outdated'` for events whose end date (or start date if no end) is in the past — skipping geocoding, artifact download, and translation for stale events. Sets `processing_status = 'new'` otherwise.
+- **Country Filter** (`artlake-geocode`) — reads `raw_events` (`processing_status = 'new'`), resolves location text → lat/lng/country via Nominatim (ADR-003). Keeps events in `target_countries`; sets `processing_status = 'done'` on accepted, `processing_status = 'failed'` on unresolvable locations (country kept as `'unknown'`). Lat/lng stored for future Phase 3 BI radius filtering (ADR-013).
+- **Artifact Downloader** (`artlake-download-artifacts`) — reads `artifact_urls` from `raw_events` (`processing_status = 'done'`), downloads PDFs and images to Unity Catalog Volumes.
 
 **Note:** Language filtering is handled at the search query level (queries generated per target language), not as a separate pipeline step (ADR-004 updated).
 
@@ -89,7 +90,7 @@ Orchestrated as **Databricks Workflows**. Each step is a `.whl` entry point exec
 |---|---|---|
 | Staging | `artlake.staging.search_results` | Raw search results, tagged with query language and source. |
 | Staging | `artlake.staging.seen_urls` | All URLs written by dedup — presence = seen. Persists across runs. Schema: url, title, source, fingerprint (sha2), ingested_at. |
-| Staging | `artlake.staging.scraped_pages` | Extracted page content, artifact URLs. `processing_status` column. |
+| Staging | `artlake.staging.scraped_pages` | Raw page content (title, body text, hrefs), artifact URLs. `fingerprint` (sha2, PK). `processing_status` column. |
 | Staging | `artlake.staging.artifacts` | Artifact metadata and UC Volume file paths. `processing_status` column. |
 | Bronze | `artlake.bronze.raw_events` | Structured clean events (title, description, dates, location, lat/lng, country, language, source, url) — original language |
 | Bronze | `artlake.bronze.translated_events` | Events translated to configured language (default: English) |

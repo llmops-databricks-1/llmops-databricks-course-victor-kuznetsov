@@ -49,7 +49,7 @@ def dedup(
     return new_records, duplicates
 
 
-def run_dedup(
+def run_dedup(  # pragma: no cover
     search_results_table: str,
     seen_urls_table: str,
     env: str = "dev",
@@ -96,7 +96,7 @@ def run_dedup(
     logger.info("Wrote {} new URLs to {}", new_count, seen_urls_table)
 
 
-def main() -> None:
+def main() -> None:  # pragma: no cover
     """Entry point for artlake-dedup wheel task."""
     import argparse
 

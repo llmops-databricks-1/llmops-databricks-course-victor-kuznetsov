@@ -14,6 +14,10 @@
 - `beautifulsoup4` + `requests` handles static HTML pages and is straightforward to deploy on Databricks clusters.
 - All packages are open source and run inside `.whl` entry points on Databricks.
 
+**Crawling etiquette**:
+- `robots.txt` checked via stdlib `urllib.robotparser` before fetching any page.
+- `llms.txt` (`/<domain>/llms.txt`) tried first — a proposed standard where sites publish structured markdown for AI consumers. Higher-quality content where available, and respects the site's intent.
+
 **Upgrade path**: Switch to **SerpAPI** (~$50/month, 5000 queries) if DuckDuckGo result quality, rate limits, or JS-rendered page content prove insufficient.
 
 **Rejected**:
@@ -305,6 +309,22 @@ client = OpenAI(
 ```
 
 **Upgrade path**: Create an "External Model" serving endpoint to proxy OpenAI GPT-4o or Anthropic Claude if Foundation Model quality proves insufficient for a specific task.
+
+---
+
+## ADR-022 · Page Scraper Job Pattern (for_each_task)
+
+**Decision**: `artlake-scrape-pages` is a **two-mode entry point** — `--mode list` feeds a Databricks `for_each_task`, `--mode scrape --url <url>` processes one URL per iteration.
+
+**Rationale**:
+- `for_each_task` gives per-URL observability in Databricks job run UI — each URL is a distinct task iteration with its own status, logs, and retry.
+- Separating list from scrape keeps each concern testable in isolation.
+- `--mode list` anti-joins `seen_urls` against `scraped_pages` on `fingerprint` (sha2 PK) and emits the URL list via `dbutils.jobs.taskValues.set`. Coordination is purely by table presence — no `processing_status` on `seen_urls`.
+- `--mode scrape` writes one row to `scraped_pages` with `fingerprint` as PK and `processing_status = 'new'`. Downstream steps (geocode, clean-events) read rows where `processing_status = 'done'` per ADR-019.
+
+**Rejected**:
+- Single-task sequential loop — loses per-URL observability and retry granularity.
+- Passing a batch of URLs per `for_each` iteration — obscures per-URL status in the job UI.
 
 ---
 

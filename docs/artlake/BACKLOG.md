@@ -88,7 +88,7 @@ Used on `scraped_pages` and `artifacts`. Downstream tasks read rows where upstre
 **Ingestion workflow:**
 ```
 artlake-generate-queries → artlake-search → artlake-search-social → artlake-dedup → artlake-scrape-pages
-→ artlake-download-artifacts → artlake-geocode → artlake-clean-events
+→ artlake-clean-events → artlake-geocode → artlake-download-artifacts
 ```
 
 **Processing workflow:**
@@ -214,18 +214,33 @@ Platforms are hand-authored config (not generated), so this file lives in `confi
 **Module:** `scrape/pages.py` → `artlake-scrape-pages`
 
 **Behaviour:**
-- Read URLs from `artlake.staging.seen_urls` LEFT ANTI JOIN `artlake.staging.scraped_pages` on url (i.e. seen but not yet scraped)
-- Fetch pages with `requests` + `beautifulsoup4`
-- Extract: title, main content, dates, location mentions
-- Detect PDF/image links → `artifact_urls`
-- Write to `artlake.staging.scraped_pages` with `processing_status = 'new'`
+
+Two-mode entry point, designed for Databricks `for_each_task` parallelism:
+
+- `--mode list` — anti-join `artlake.staging.seen_urls` LEFT ANTI JOIN `artlake.staging.scraped_pages` on `fingerprint` (PK); emit the unseen URL list as a Databricks task value (`dbutils.jobs.taskValues.set`). No `processing_status` used — coordination is purely by presence in `scraped_pages`.
+- `--mode scrape --url <url>` — fetch a single URL (one `for_each_task` iteration):
+  1. Check `robots.txt` via stdlib `urllib.robotparser` — skip if disallowed
+  2. Try `/<domain>/llms.txt` — use structured markdown content if available
+  3. Fall back to `requests` + `beautifulsoup4` raw HTML
+  4. Extract **raw content only**: title, body text, raw hrefs
+  5. Detect PDF/image artifact links (`.pdf` hrefs, poster/flyer `<img>` heuristics) → `artifact_urls`
+  6. Write one row to `artlake.staging.scraped_pages`: fingerprint (sha2, PK), url, title, raw_text, artifact_urls, `processing_status = 'new'`
+
+No date/location extraction at this step — deferred to downstream `artlake-clean-events`.
 
 **Acceptance criteria:**
-- PDF/image link detection
-- Timeout and error handling (connection errors, HTTP 4xx/5xx)
-- Unit tests with saved HTML fixtures
+- [ ] Anti-join on `fingerprint`, not `url` string
+- [ ] `robots.txt` respected before fetching
+- [ ] `llms.txt` tried before raw HTML fallback
+- [ ] Raw content stored only (no structured extraction)
+- [ ] `fingerprint` written as PK on `scraped_pages`
+- [ ] PDF/image artifact link detection
+- [ ] Timeout and error handling (connection errors, HTTP 4xx/5xx) — write `processing_status = 'failed'` on error
+- [ ] Unit tests with saved HTML fixtures (no live HTTP)
+- [ ] Entry point `artlake-scrape-pages` declared in `pyproject.toml`
+- [ ] `resources/scrape_pages_job.yml` with `for_each_task` pattern
 
-**Upgrade path:** SerpAPI (paid) when richer content extraction or JS-rendered pages are needed.
+**Upgrade path:** SerpAPI (paid) when JS-rendered pages or richer content extraction is needed.
 
 ---
 
@@ -234,15 +249,18 @@ Platforms are hand-authored config (not generated), so this file lives in `confi
 **Module:** `scrape/download.py` → `artlake-download-artifacts`
 
 **Behaviour:**
+- Read `artifact_urls` from `artlake.bronze.raw_events` where `processing_status = 'done'` (geocoded, non-outdated events only)
 - Download PDFs/images to UC Volume: `artlake/volumes/raw_artifacts/{event_fingerprint}/{filename}`
 - Create `EventArtifact` records
 - Skip files > configurable max size
 
 **Acceptance criteria:**
-- Handles PDF, JPG, PNG, WEBP
-- Content-hash dedup
-- Unit tests with mocked downloads
-- Integration test for UC Volume write
+- [ ] Handles PDF, JPG, PNG, WEBP
+- [ ] Content-hash deduplication (skip identical files already downloaded)
+- [ ] Configurable max file size
+- [ ] Unit tests with mocked downloads
+- [ ] Integration test for UC Volume write (`@pytest.mark.integration`)
+- [ ] Entry point `artlake-download-artifacts` declared in `pyproject.toml`
 
 ---
 
@@ -251,14 +269,19 @@ Platforms are hand-authored config (not generated), so this file lives in `confi
 **Module:** `filter/country.py` → `artlake-geocode`
 
 **Behaviour:**
-- Geocode event location text → (lat, lng, country) via `geopy` + Nominatim
+- Read `CleanEvent` records from `artlake.bronze.raw_events` where `processing_status = 'new'` (excludes `outdated` events)
+- Geocode `location_text` → (lat, lng, country) via `geopy` + Nominatim (ADR-003)
 - Keep events in `target_countries`; filter out others
-- Store lat/lng/country on accepted events
+- Set `processing_status = 'done'` on accepted events; `processing_status = 'failed'` on unresolvable (country kept as `'unknown'`)
+- Lat/lng stored for future Phase 3 BI radius filtering (ADR-013)
 
 **Acceptance criteria:**
-- Caching to respect Nominatim 1 req/s
-- Unresolvable locations: keep event, country="unknown"
-- Unit tests with known locations
+- [ ] Reads from `raw_events` where `processing_status = 'new'`
+- [ ] Geocoding result caching to respect Nominatim 1 req/s rate limit
+- [ ] Unresolvable locations: keep event, set country=`"unknown"`, `processing_status = 'failed'`
+- [ ] Unit tests with known locations and expected countries
+- [ ] Country detection from geocoded coordinates
+- [ ] Entry point `artlake-geocode` declared in `pyproject.toml`
 
 **Note:** Nominatim cold-start — 1 req/s with hundreds of uncached events on first run may take 10+ minutes. Accept this for MVP; consider OpenCage Geocoder (free tier: 2500 req/day) if latency becomes a problem.
 
@@ -269,15 +292,22 @@ Platforms are hand-authored config (not generated), so this file lives in `confi
 **Module:** `clean/events.py` → `artlake-clean-events`
 
 **Behaviour:**
-- Read from scraped pages (passed all filters)
+- Read from `artlake.staging.scraped_pages` where `processing_status = 'new'`
 - Parse dates (ISO, natural language, European dd/mm/yyyy)
 - Normalise titles, descriptions, location text
-- Write structured `CleanEvent` records to `artlake.bronze.raw_events`
+- Copy `artifact_urls` from `scraped_pages` to `CleanEvent`
+- Write `CleanEvent` records to `artlake.bronze.raw_events`:
+  - `processing_status = 'outdated'` if `date_end < today` (or `date_start < today` when no end date)
+  - `processing_status = 'new'` otherwise (including events with no detected date)
 
 **Acceptance criteria:**
-- Date parsing handles multiple formats
-- Unit tests for each parsing function
-- Integration test for Delta write
+- [ ] Date parsing handles ISO, natural language, European dd/mm/yyyy formats
+- [ ] Events with past dates written with `processing_status = 'outdated'`
+- [ ] Events with no detected date written with `processing_status = 'new'`
+- [ ] Null handling for missing fields (description, dates, coordinates)
+- [ ] Unit tests for each parsing function
+- [ ] Integration test for Delta write (`@pytest.mark.integration`)
+- [ ] Entry point `artlake-clean-events` declared in `pyproject.toml`
 
 ---
 
@@ -286,7 +316,7 @@ Platforms are hand-authored config (not generated), so this file lives in `confi
 **Workflow:** `resources/ingest_events_job.yml`
 
 **Behaviour:**
-- Multi-task Databricks Workflow chaining: search → search-social → dedup → scrape-pages → download-artifacts → geocode → clean-events
+- Multi-task Databricks Workflow chaining: search → search-social → dedup → scrape-pages → clean-events → geocode → download-artifacts
 - Each task is `python_wheel_task`
 - Scheduled daily via DAB
 
@@ -457,7 +487,7 @@ Platforms are hand-authored config (not generated), so this file lives in `confi
 ### Workflow dependencies (task execution order at runtime)
 
 ```
-Ingestion:  search → search-social → dedup → scrape → download → geocode → clean
+Ingestion:  search → search-social → dedup → scrape → clean → geocode → download
 Processing: translate → process-artifacts → categorise → embed
 ```
 

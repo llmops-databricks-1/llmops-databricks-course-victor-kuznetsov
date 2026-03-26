@@ -265,6 +265,7 @@ class TestProcessingStatus:
             ProcessingStatus.PROCESSING,
             ProcessingStatus.DONE,
             ProcessingStatus.FAILED,
+            ProcessingStatus.OUTDATED,
         }
 
     def test_string_values(self) -> None:
