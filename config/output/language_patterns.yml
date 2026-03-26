@@ -1,0 +1,26 @@
+generated_at: '2026-03-26T00:00:00+00:00'
+model: databricks-meta-llama-3-3-70b-instruct
+languages:
+- en
+- nl
+target_countries:
+- NL
+- BE
+title_keywords:
+  en:
+  - Title
+  - Event
+  - Name
+  nl:
+  - Titel
+  - Evenement
+  - Naam
+location_keywords:
+  en:
+  - Location
+  - Venue
+  - Address
+  - Place
+  nl:
+  - Locatie
+  - Adres

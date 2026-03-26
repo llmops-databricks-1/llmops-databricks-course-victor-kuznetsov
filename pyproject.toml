@@ -35,6 +35,7 @@ artlake-search-social = "artlake.search.social:main"
 artlake-dedup = "artlake.filter.dedup:main"
 artlake-scrape-pages = "artlake.scrape.pages:main"
 artlake-clean-events = "artlake.clean.events:main"
+artlake-generate-language-patterns = "artlake.clean.patterns:main"
 
 [project.optional-dependencies]
 dev = ["databricks-connect>=17.0, <18",

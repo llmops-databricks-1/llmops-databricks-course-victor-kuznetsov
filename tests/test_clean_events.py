@@ -23,7 +23,29 @@ from artlake.clean.events import (
     is_outdated,
     parse_dates,
 )
+from artlake.clean.patterns import LanguagePatterns, build_field_re
 from artlake.models.event import ProcessingStatus, ScrapedPage
+
+_TEST_PATTERNS = LanguagePatterns(
+    generated_at="2026-01-01T00:00:00+00:00",
+    model="test",
+    languages=["en", "nl", "de", "fr"],
+    target_countries=["NL", "BE", "DE", "FR", "LU"],
+    title_keywords={
+        "en": ["Title", "Event", "Name"],
+        "nl": ["Titel", "Evenement", "Naam"],
+        "de": ["Titel", "Veranstaltung"],
+        "fr": ["Titre", "Événement", "Nom"],
+    },
+    location_keywords={
+        "en": ["Location", "Venue", "Address", "Place"],
+        "nl": ["Locatie", "Adres"],
+        "de": ["Ort", "Adresse"],
+        "fr": ["Lieu", "Adresse", "Endroit"],
+    },
+)
+_TEST_LOCATION_RE = build_field_re(_TEST_PATTERNS.location_keywords)
+_TEST_TITLE_RE = build_field_re(_TEST_PATTERNS.title_keywords)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -146,64 +168,69 @@ class TestIsOutdated:
 class TestExtractFieldsRuleBased:
     def test_uses_page_title(self) -> None:
         page = _page(title="Open Call 2025", raw_text="Some description text here.")
-        fields = extract_fields_rule_based(page)
+        fields = extract_fields_rule_based(page, _TEST_LOCATION_RE, _TEST_TITLE_RE)
         assert fields["title"] == "Open Call 2025"
 
     def test_strips_title_site_suffix(self) -> None:
         page = _page(title="Open Call | Gallery Brussels", raw_text="Some text.")
-        fields = extract_fields_rule_based(page)
+        fields = extract_fields_rule_based(page, _TEST_LOCATION_RE, _TEST_TITLE_RE)
         assert fields["title"] == "Open Call"
 
     def test_normalizes_description_whitespace(self) -> None:
         page = _page(raw_text="  Art   event  \n\t details  here  ")
-        fields = extract_fields_rule_based(page)
+        fields = extract_fields_rule_based(page, _TEST_LOCATION_RE, _TEST_TITLE_RE)
         assert fields["description"] == "Art event details here"
 
     def test_decodes_html_entities_in_description(self) -> None:
         page = _page(raw_text="Open call for Art &amp; Design enthusiasts.")
-        fields = extract_fields_rule_based(page)
+        fields = extract_fields_rule_based(page, _TEST_LOCATION_RE, _TEST_TITLE_RE)
         assert fields["description"] == "Open call for Art & Design enthusiasts."
+
+    def test_extracts_title_from_labeled_field(self) -> None:
+        page = _page(title="", raw_text="Titel: Kunstmarkt Amsterdam\nMore text here.")
+        fields = extract_fields_rule_based(page, _TEST_LOCATION_RE, _TEST_TITLE_RE)
+        assert fields["title"] == "Kunstmarkt Amsterdam"
 
     def test_fallback_to_first_line_when_no_title(self) -> None:
         page = _page(title="", raw_text="Art Market Brussels\nMore text here.")
-        fields = extract_fields_rule_based(page)
+        fields = extract_fields_rule_based(page, _TEST_LOCATION_RE, _TEST_TITLE_RE)
         assert fields["title"] == "Art Market Brussels"
 
     def test_extracts_description_from_raw_text(self) -> None:
         page = _page(raw_text="A" * 600)
-        fields = extract_fields_rule_based(page)
+        fields = extract_fields_rule_based(page, _TEST_LOCATION_RE, _TEST_TITLE_RE)
         assert fields["description"] is not None
         assert len(fields["description"]) <= 500
 
     def test_extracts_location_with_keyword(self) -> None:
         page = _page(raw_text="Event details\nLocation: Antwerp, Belgium\nMore info.")
-        fields = extract_fields_rule_based(page)
+        fields = extract_fields_rule_based(page, _TEST_LOCATION_RE, _TEST_TITLE_RE)
         assert fields["location_text"] == "Antwerp, Belgium"
 
     def test_extracts_venue_keyword(self) -> None:
         page = _page(raw_text="Venue: Stedelijk Museum Amsterdam")
-        fields = extract_fields_rule_based(page)
+        fields = extract_fields_rule_based(page, _TEST_LOCATION_RE, _TEST_TITLE_RE)
         assert fields["location_text"] == "Stedelijk Museum Amsterdam"
 
     def test_extracts_adresse_keyword(self) -> None:
         page = _page(raw_text="Adresse: Rue du Louvre 75, Paris")
-        fields = extract_fields_rule_based(page)
+        fields = extract_fields_rule_based(page, _TEST_LOCATION_RE, _TEST_TITLE_RE)
         assert fields["location_text"] == "Rue du Louvre 75, Paris"
 
     def test_no_location_returns_none(self) -> None:
         page = _page(raw_text="Join us for the event. Great fun ahead.")
-        fields = extract_fields_rule_based(page)
+        fields = extract_fields_rule_based(page, _TEST_LOCATION_RE, _TEST_TITLE_RE)
         assert fields["location_text"] is None
 
     def test_html_raw_text_forces_none_fields(self) -> None:
         page = _page(raw_text="<!DOCTYPE html><html><body>Maintenance</body></html>")
-        fields = extract_fields_rule_based(page)
+        fields = extract_fields_rule_based(page, _TEST_LOCATION_RE, _TEST_TITLE_RE)
         assert fields["description"] is None
         assert fields["location_text"] is None
 
     def test_empty_page(self) -> None:
         page = _page(title="", raw_text="")
-        fields = extract_fields_rule_based(page)
+        fields = extract_fields_rule_based(page, _TEST_LOCATION_RE, _TEST_TITLE_RE)
         assert fields["title"] is None
         assert fields["description"] is None
         assert fields["location_text"] is None
@@ -395,7 +422,7 @@ class TestCleanPage:
             raw_text=f"Event on {past_date}. Location: Amsterdam.",
         )
         client = MagicMock()
-        event = clean_page(page, "en", client, "test-model")
+        event = clean_page(page, "en", client, "test-model", _TEST_PATTERNS)
         assert event.processing_status == ProcessingStatus.OUTDATED
         client.chat.completions.create.assert_not_called()
 
@@ -405,7 +432,7 @@ class TestCleanPage:
             raw_text="Great exhibition. Location: Brussels, Belgium. Apply by 2099-08-01.",  # noqa: E501
         )
         client = MagicMock()
-        event = clean_page(page, "en", client, "test-model")
+        event = clean_page(page, "en", client, "test-model", _TEST_PATTERNS)
         assert event.processing_status == ProcessingStatus.NEW
         assert event.title == "Summer Open Call"
         assert event.location_text == "Brussels, Belgium"
@@ -418,7 +445,7 @@ class TestCleanPage:
         )
         client = self._client_with(payload)
 
-        event = clean_page(page, "nl", client, "test-model")
+        event = clean_page(page, "nl", client, "test-model", _TEST_PATTERNS)
 
         client.chat.completions.create.assert_called_once()
         assert event.location_text == "Rotterdam"
@@ -429,7 +456,7 @@ class TestCleanPage:
         client = MagicMock()
         client.chat.completions.create.side_effect = Exception("LLM down")
 
-        event = clean_page(page, "en", client, "test-model")
+        event = clean_page(page, "en", client, "test-model", _TEST_PATTERNS)
 
         assert event.processing_status == ProcessingStatus.REQUIRES_MANUAL_VALIDATION
 
@@ -445,7 +472,7 @@ class TestCleanPage:
         )
         client = self._client_with(payload)
 
-        event = clean_page(page, "de", client, "test-model")
+        event = clean_page(page, "de", client, "test-model", _TEST_PATTERNS)
 
         assert event.processing_status == ProcessingStatus.OUTDATED
 
@@ -456,7 +483,7 @@ class TestCleanPage:
             artifact_urls=["https://example.com/poster.pdf"],
         )
         client = MagicMock()
-        event = clean_page(page, "en", client, "test-model")
+        event = clean_page(page, "en", client, "test-model", _TEST_PATTERNS)
         assert "https://example.com/poster.pdf" in event.artifact_urls
 
     def test_no_date_event_is_not_outdated(self) -> None:
@@ -475,7 +502,7 @@ class TestCleanPage:
                 )
             )
         ]
-        event = clean_page(page, "fr", client, "test-model")
+        event = clean_page(page, "fr", client, "test-model", _TEST_PATTERNS)
         assert event.processing_status != ProcessingStatus.OUTDATED
 
 

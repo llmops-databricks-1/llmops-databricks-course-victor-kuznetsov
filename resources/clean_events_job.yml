@@ -13,7 +13,20 @@ resources:
               - ../dist/*.whl
 
       tasks:
+        - task_key: generate_language_patterns
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-generate-language-patterns
+            package_name: artlake
+            parameters:
+              - "--keywords"
+              - "${var.config_root}/config/input/keywords.yml"
+              - "--output"
+              - "${var.config_root}/config/output/language_patterns.yml"
+
         - task_key: list_urls
+          depends_on:
+            - task_key: generate_language_patterns
           environment_key: default
           python_wheel_task:
             entry_point: artlake-clean-events
@@ -54,16 +67,7 @@ resources:
                   - "artlake.bronze.raw_events"
                   - "--model"
                   - "databricks-meta-llama-3-3-70b-instruct"
+                  - "--language-patterns"
+                  - "${var.config_root}/config/output/language_patterns.yml"
                   - "--env"
                   - "${bundle.target}"
-                  - "--languages"
-                  - "en"
-                  - "nl"
-                  - "de"
-                  - "fr"
-                  - "--target-countries"
-                  - "NL"
-                  - "BE"
-                  - "DE"
-                  - "FR"
-                  - "LU"

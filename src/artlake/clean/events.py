@@ -17,6 +17,7 @@ import json
 import re
 import unicodedata
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -28,6 +29,7 @@ import backoff
 from loguru import logger
 from openai import OpenAI
 
+from artlake.clean.patterns import LanguagePatterns, build_field_re, load_patterns
 from artlake.models.event import CleanEvent, ProcessingStatus, ScrapedPage
 
 # ---------------------------------------------------------------------------
@@ -38,13 +40,6 @@ _DATE_SEARCH_CHARS = 3000  # chars fed to dateparser.search
 _TEXT_TRUNCATE = 3000  # chars sent to LLM
 _DATE_HORIZON_DAYS = 730  # filter out dates > 2 years old (publication/copyright noise)
 _DATE_FUTURE_DAYS = 365 * 100  # filter out dates > 100 years ahead (parser artefacts)
-
-
-_LOCATION_RE = re.compile(
-    r"(?:^|\b)(?:Location|Venue|Address|Place|Locatie|Adresse|Adres|Ort|Lieu|Endroit)"
-    r"\s*:\s*(.+)",
-    re.IGNORECASE | re.MULTILINE,
-)
 
 _EXTRACTION_SYSTEM = (
     "You are a data extraction assistant. Extract structured event information "
@@ -164,8 +159,9 @@ def _clean_title(title: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _extract_location(text: str) -> str | None:
-    match = _LOCATION_RE.search(text)
+def _extract_field(text: str, field_re: re.Pattern[str]) -> str | None:
+    """Extract the value following a labeled field (e.g. 'Location: Amsterdam')."""
+    match = field_re.search(text)
     if match:
         value = match.group(1).strip()
         # Trim to first sentence or line
@@ -174,12 +170,21 @@ def _extract_location(text: str) -> str | None:
     return None
 
 
-def extract_fields_rule_based(page: ScrapedPage) -> dict[str, str | None]:
+def extract_fields_rule_based(
+    page: ScrapedPage,
+    location_re: re.Pattern[str],
+    title_re: re.Pattern[str],
+) -> dict[str, str | None]:
     """Extract title, description, and location_text using heuristics.
 
     Returns a dict with string-or-None values for each field.
     All extracted strings are normalised (HTML entities decoded, unicode
     normalised, whitespace collapsed).
+
+    Args:
+        page: Scraped page to extract from.
+        location_re: Compiled regex built from patterns.location_keywords.
+        title_re: Compiled regex built from patterns.title_keywords.
     """
     title: str | None = _clean_title(page.title) if page.title else None
 
@@ -188,13 +193,17 @@ def extract_fields_rule_based(page: ScrapedPage) -> dict[str, str | None]:
     if page.raw_text and _looks_like_html(page.raw_text):
         return {"title": title, "description": None, "location_text": None}
 
-    # Fallback: first meaningful non-HTML line of raw_text
+    # Fallback title: try labeled field first ("Titel: Open Call"), then first line
     if not title and page.raw_text:
-        for line in page.raw_text.splitlines():
-            stripped = _normalize_text(line)
-            if len(stripped) > 10 and not stripped.startswith("<"):
-                title = _clean_title(stripped[:200])
-                break
+        raw_title = _extract_field(page.raw_text, title_re)
+        if raw_title:
+            title = _clean_title(raw_title[:200])
+        else:
+            for line in page.raw_text.splitlines():
+                stripped = _normalize_text(line)
+                if len(stripped) > 10 and not stripped.startswith("<"):
+                    title = _clean_title(stripped[:200])
+                    break
 
     description: str | None = None
     if page.raw_text:
@@ -203,7 +212,7 @@ def extract_fields_rule_based(page: ScrapedPage) -> dict[str, str | None]:
 
     location_text: str | None = None
     if page.raw_text:
-        raw_loc = _extract_location(page.raw_text)
+        raw_loc = _extract_field(page.raw_text, location_re)
         location_text = _normalize_text(raw_loc) if raw_loc else None
 
     return {"title": title, "description": description, "location_text": location_text}
@@ -340,9 +349,7 @@ def clean_page(
     language: str,
     client: OpenAI,
     model: str,
-    *,
-    languages: list[str] | None = None,
-    target_countries: list[str] | None = None,
+    patterns: LanguagePatterns,
 ) -> CleanEvent:
     """Apply the extraction funnel to a single ScrapedPage and return a CleanEvent.
 
@@ -358,20 +365,19 @@ def clean_page(
         language: BCP-47 language code for this page (from search_results join).
         client: OpenAI-compatible client pointed at Databricks Foundation Models.
         model: Model ID for LLM fallback extraction.
-        languages: Languages to pass to dateparser (from ArtLakeConfig.languages).
-            None lets dateparser auto-detect (slower).
-        target_countries: ISO-3166-1 alpha-2 codes for TLD → country inference
-            (from ArtLakeConfig.target_countries).
+        patterns: LanguagePatterns providing languages, target_countries, and
+            location_keywords for rule-based extraction.
     """
-    _target_countries = target_countries or []
+    location_re = build_field_re(patterns.location_keywords)
+    title_re = build_field_re(patterns.title_keywords)
 
     # Step 1 — rule-based date parsing
-    date_start, date_end = parse_dates(page.raw_text or "", languages)
+    date_start, date_end = parse_dates(page.raw_text or "", patterns.languages)
 
     # Step 2 — filter outdated early (skip expensive steps below)
     if is_outdated(date_start, date_end):
         logger.info("Outdated event (rule-based dates): {}", page.url)
-        fields = extract_fields_rule_based(page)
+        fields = extract_fields_rule_based(page, location_re, title_re)
         return _make_clean_event(
             page,
             language,
@@ -379,11 +385,11 @@ def clean_page(
             date_end,
             fields,
             ProcessingStatus.OUTDATED,
-            _target_countries,
+            patterns.target_countries,
         )
 
     # Step 3 — rule-based field extraction
-    fields = extract_fields_rule_based(page)
+    fields = extract_fields_rule_based(page, location_re, title_re)
 
     # Step 4 — LLM fallback for missing fields
     if not _fields_complete(fields):
@@ -406,7 +412,7 @@ def clean_page(
                     date_end,
                     fields,
                     ProcessingStatus.OUTDATED,
-                    _target_countries,
+                    patterns.target_countries,
                 )
 
     # Step 5 — determine final status
@@ -419,7 +425,7 @@ def clean_page(
         logger.warning("Incomplete extraction, manual validation needed: {}", page.url)
 
     return _make_clean_event(
-        page, language, date_start, date_end, fields, status, _target_countries
+        page, language, date_start, date_end, fields, status, patterns.target_countries
     )
 
 
@@ -497,7 +503,7 @@ def _write_clean_events(  # pragma: no cover
 
 def run_list(  # pragma: no cover
     scraped_pages_table: str,
-    search_results_table: str,
+    patterns_path: Path,
     limit: int = 0,
 ) -> list[str]:
     """Read new scraped pages and emit their URLs as a Databricks task value.
@@ -509,6 +515,8 @@ def run_list(  # pragma: no cover
     from pyspark.sql import functions as F
 
     spark = SparkSession.builder.getOrCreate()
+
+    _ = load_patterns(patterns_path)  # validate patterns file is readable
 
     pages_df = spark.table(scraped_pages_table).filter(
         F.col("processing_status") == ProcessingStatus.NEW
@@ -536,12 +544,11 @@ def run_clean_one(  # pragma: no cover
     scraped_pages_table: str,
     search_results_table: str,
     raw_events_table: str,
+    patterns_path: Path,
     *,
     model: str,
     client: OpenAI | None = None,
     env: str = "dev",
-    languages: list[str] | None = None,
-    target_countries: list[str] | None = None,
 ) -> None:
     """Clean a single scraped page identified by *url* and append to raw_events.
 
@@ -551,6 +558,8 @@ def run_clean_one(  # pragma: no cover
     from pyspark.sql import functions as F
 
     spark = SparkSession.builder.getOrCreate()
+
+    patterns = load_patterns(patterns_path)
 
     pages_df = spark.table(scraped_pages_table).filter(F.col("url") == url)
 
@@ -584,14 +593,7 @@ def run_clean_one(  # pragma: no cover
             error=row["error"],
         )
         language = row["language"] or "unknown"
-        event = clean_page(
-            page,
-            language,
-            client,
-            model,
-            languages=languages,
-            target_countries=target_countries,
-        )
+        event = clean_page(page, language, client, model, patterns)
         r = event.model_dump(mode="python")
         r["url"] = str(r["url"])
         r["ingested_at"] = str(r["ingested_at"])
@@ -605,12 +607,11 @@ def run_clean(  # pragma: no cover
     scraped_pages_table: str,
     search_results_table: str,
     raw_events_table: str,
+    patterns_path: Path,
     *,
     model: str,
     client: OpenAI | None = None,
     env: str = "dev",
-    languages: list[str] | None = None,
-    target_countries: list[str] | None = None,
 ) -> int:
     """Read new ScrapedPage rows, clean them, and write CleanEvent rows to Delta.
 
@@ -619,12 +620,10 @@ def run_clean(  # pragma: no cover
         search_results_table: Fully-qualified Delta table for search results
             (used to look up language per URL).
         raw_events_table: Fully-qualified Delta table to write CleanEvent rows to.
+        patterns_path: Path to the language_patterns YAML file.
         model: Databricks Foundation Model ID for LLM fallback extraction.
         client: Pre-built OpenAI-compatible client (created from workspace token if None).
         env: Deployment environment tag (dev/tst/acc/prd).
-        languages: BCP-47 codes from ArtLakeConfig.languages — passed to dateparser.
-        target_countries: ISO-3166-1 alpha-2 codes from ArtLakeConfig.target_countries
-            — used for TLD → country inference.
 
     Returns the number of events written.
     """
@@ -632,6 +631,8 @@ def run_clean(  # pragma: no cover
     from pyspark.sql import functions as F
 
     spark = SparkSession.builder.getOrCreate()
+
+    patterns = load_patterns(patterns_path)
 
     pages_df = spark.table(scraped_pages_table).filter(
         F.col("processing_status") == ProcessingStatus.NEW
@@ -665,14 +666,7 @@ def run_clean(  # pragma: no cover
             error=row["error"],
         )
         language = row["language"] or "unknown"
-        event = clean_page(
-            page,
-            language,
-            client,
-            model,
-            languages=languages,
-            target_countries=target_countries,
-        )
+        event = clean_page(page, language, client, model, patterns)
         # mode="python" preserves datetime objects — required for TimestampType columns
         r = event.model_dump(mode="python")
         r["url"] = str(r["url"])
@@ -738,31 +732,17 @@ def main() -> None:  # pragma: no cover
         help="Deployment environment (dev/tst/acc/prd)",
     )
     parser.add_argument(
-        "--languages",
-        nargs="+",
-        default=None,
-        metavar="LANG",
-        help=(
-            "BCP-47 language codes for date parsing, e.g. --languages en nl de fr. "
-            "Defaults to ['en'] when omitted."
-        ),
-    )
-    parser.add_argument(
-        "--target-countries",
-        nargs="+",
-        default=None,
-        metavar="CODE",
-        help=(
-            "ISO-3166-1 alpha-2 country codes used for TLD → country inference, "
-            "e.g. --target-countries NL BE DE FR LU."
-        ),
+        "--language-patterns",
+        type=Path,
+        default=Path("config/output/language_patterns.yml"),
+        help="Path to the language_patterns YAML file",
     )
     args = parser.parse_args()
 
     if args.mode == "list":
         run_list(
             scraped_pages_table=args.scraped_pages_table,
-            search_results_table=args.search_results_table,
+            patterns_path=args.language_patterns,
             limit=args.limit,
         )
     else:
@@ -773,8 +753,7 @@ def main() -> None:  # pragma: no cover
             scraped_pages_table=args.scraped_pages_table,
             search_results_table=args.search_results_table,
             raw_events_table=args.raw_events_table,
+            patterns_path=args.language_patterns,
             model=args.model,
             env=args.env,
-            languages=args.languages,
-            target_countries=args.target_countries,
         )
