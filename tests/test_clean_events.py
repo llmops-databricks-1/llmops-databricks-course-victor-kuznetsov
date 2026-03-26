@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -523,5 +524,6 @@ class TestCleanEventsIntegration:
             scraped_pages_table="artlake.staging.scraped_pages",
             search_results_table="artlake.staging.search_results",
             raw_events_table="artlake.bronze.raw_events",
+            patterns_path=Path("config/output/language_patterns.yml"),
             model="databricks-meta-llama-3-3-70b-instruct",
         )

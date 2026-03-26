@@ -38,6 +38,8 @@ resources:
               - "artlake.staging.scraped_pages"
               - "--search-results-table"
               - "artlake.staging.search_results"
+              - "--language-patterns"
+              - "${var.config_root}/config/output/language_patterns.yml"
               - "--env"
               - "${bundle.target}"
 
