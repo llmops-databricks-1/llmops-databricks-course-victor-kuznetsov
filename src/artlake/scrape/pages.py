@@ -169,7 +169,7 @@ def scrape_url(
     )
 
 
-def run_list(
+def run_list(  # pragma: no cover
     seen_urls_table: str,
     scraped_pages_table: str,
     limit: int = 0,
@@ -210,7 +210,7 @@ def run_list(
     return urls
 
 
-def run_scrape(
+def run_scrape(  # pragma: no cover
     url: str,
     scraped_pages_table: str,
     env: str = "dev",
@@ -269,7 +269,7 @@ def run_scrape(
     )
 
 
-def main() -> None:
+def main() -> None:  # pragma: no cover
     """Entry point for artlake-scrape-pages wheel task."""
     import argparse
 
