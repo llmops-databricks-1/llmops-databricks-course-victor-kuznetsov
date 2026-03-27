@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 from pydantic import HttpUrl
 
-from artlake.filter.country import apply_geocoding, geocode_location, llm_resolve_country
+from artlake.filter.country import (
+    apply_geocoding,
+    geocode_location,
+    llm_extract_address,
+    llm_resolve_country,
+)
 from artlake.models.event import CleanEvent, ProcessingStatus
 
 # ---------------------------------------------------------------------------
@@ -149,6 +154,87 @@ class TestGeocodeLocation:
         _, _, country = geocode_location("Somewhere", lambda _: LocationNoCC(), cache)
 
         assert country is None
+
+
+# ---------------------------------------------------------------------------
+# llm_extract_address
+# ---------------------------------------------------------------------------
+
+
+class TestLLMExtractAddress:
+    def test_success_returns_clean_address(self) -> None:
+        cache: dict = {}
+        result = llm_extract_address(
+            "Villa Waldberta (Höhenbergstraße 25)",
+            lambda _: "Feldafing, Bavaria, Germany",
+            cache,
+        )
+        assert result == "Feldafing, Bavaria, Germany"
+
+    def test_none_response_returns_none(self) -> None:
+        cache: dict = {}
+        result = llm_extract_address("gibberish xyz", lambda _: None, cache)
+        assert result is None
+
+    def test_none_string_response_returns_none(self) -> None:
+        cache: dict = {}
+        result = llm_extract_address("form text blah", lambda _: "NONE", cache)
+        assert result is None
+
+    def test_none_case_insensitive(self) -> None:
+        cache: dict = {}
+        result = llm_extract_address("form text blah", lambda _: "none", cache)
+        assert result is None
+
+    def test_empty_location_returns_none_without_calling_fn(self) -> None:
+        call_count = 0
+
+        def counting_fn(_: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "Berlin, Germany"
+
+        cache: dict = {}
+        result = llm_extract_address("", counting_fn, cache)
+        assert result is None
+        assert call_count == 0
+
+    def test_result_stored_in_cache(self) -> None:
+        cache: dict = {}
+        llm_extract_address("messy location", lambda _: "Brussels, Belgium", cache)
+        assert cache["messy location"] == "Brussels, Belgium"
+
+    def test_cache_hit_skips_fn(self) -> None:
+        call_count = 0
+
+        def counting_fn(_: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "Brussels, Belgium"
+
+        cache: dict = {}
+        llm_extract_address("messy", counting_fn, cache)
+        llm_extract_address("messy", counting_fn, cache)
+        assert call_count == 1
+
+    def test_exception_returns_none_and_caches(self) -> None:
+        call_count = 0
+
+        def failing_fn(_: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("LLM error")
+
+        cache: dict = {}
+        result = llm_extract_address("somewhere", failing_fn, cache)
+        llm_extract_address("somewhere", failing_fn, cache)
+        assert result is None
+        assert call_count == 1
+
+    def test_whitespace_stripped(self) -> None:
+        cache: dict = {}
+        result = llm_extract_address("loc", lambda _: "  Antwerp, Belgium  ", cache)
+        assert result == "Antwerp, Belgium"
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +457,99 @@ class TestApplyGeocoding:
         assert result[0].domain_country == "NL"
         assert result[0].country == "NL"
 
+    def test_llm_address_resolves_with_coordinates(self) -> None:
+        """Stage 2: LLM normalises address → Nominatim succeeds → lat/lng set."""
+        location_map = {
+            "Villa Waldberta (messy)": None,
+            "Feldafing, Bavaria, Germany": MockLocation(47.96, 11.29, "de"),
+        }
+        event = _make_event("fp1", "Villa Waldberta (messy)")
+
+        result = apply_geocoding(
+            [event],
+            ["DE"],
+            lambda text: location_map.get(text),
+            llm_address_fn=lambda _: "Feldafing, Bavaria, Germany",
+        )
+
+        assert result[0].processing_status == ProcessingStatus.DONE
+        assert result[0].country == "DE"
+        assert result[0].lat == pytest.approx(47.96)
+        assert result[0].lng == pytest.approx(11.29)
+
+    def test_llm_address_not_called_when_nominatim_succeeds(self) -> None:
+        llm_address_calls = 0
+
+        def counting_address_fn(_: str) -> str:
+            nonlocal llm_address_calls
+            llm_address_calls += 1
+            return "Amsterdam, Netherlands"
+
+        event = _make_event("fp1", "Amsterdam")
+        apply_geocoding(
+            [event],
+            ["NL"],
+            lambda _: MockLocation(52.37, 4.89, "nl"),
+            llm_address_fn=counting_address_fn,
+        )
+
+        assert llm_address_calls == 0
+
+    def test_llm_address_fails_falls_through_to_country_fn(self) -> None:
+        """When LLM address + Nominatim both fail, country-only fn is used."""
+        event = _make_event("fp1", "Belgique")
+
+        result = apply_geocoding(
+            [event],
+            ["BE"],
+            lambda _: None,
+            llm_address_fn=lambda _: "NONE",
+            llm_country_fn=lambda _: "BE",
+        )
+
+        assert result[0].processing_status == ProcessingStatus.DONE
+        assert result[0].country == "BE"
+        assert result[0].lat is None
+        assert result[0].lng is None
+
+    def test_llm_address_resolves_but_out_of_target(self) -> None:
+        location_map = {
+            "Luxembourg": None,
+            "Luxembourg City, Luxembourg": MockLocation(49.61, 6.13, "lu"),
+        }
+        event = _make_event("fp1", "Luxembourg")
+
+        result = apply_geocoding(
+            [event],
+            ["NL", "BE"],
+            lambda text: location_map.get(text),
+            llm_address_fn=lambda _: "Luxembourg City, Luxembourg",
+        )
+
+        assert result[0].processing_status == ProcessingStatus.FAILED
+        assert result[0].country == "LU"
+
+    def test_llm_address_cache_deduplicates(self) -> None:
+        address_calls = 0
+
+        def counting_address_fn(_: str) -> str:
+            nonlocal address_calls
+            address_calls += 1
+            return "Brussels, Belgium"
+
+        events = [_make_event(f"fp{i}", "Bruxelles") for i in range(3)]
+
+        apply_geocoding(
+            events,
+            ["BE"],
+            lambda _: None,
+            llm_address_fn=counting_address_fn,
+        )
+
+        assert address_calls == 1
+
     def test_llm_fallback_used_when_nominatim_fails(self) -> None:
+        """Stage 3 (country only): no address fn, country fn resolves."""
         event = _make_event("fp1", "Belgique")
 
         result = apply_geocoding(
@@ -393,7 +571,10 @@ class TestApplyGeocoding:
 
         event = _make_event("fp1", "Amsterdam")
         apply_geocoding(
-            [event], ["NL"], lambda _: MockLocation(52.37, 4.89, "nl"), counting_llm
+            [event],
+            ["NL"],
+            lambda _: MockLocation(52.37, 4.89, "nl"),
+            llm_country_fn=counting_llm,
         )
 
         assert llm_call_count == 0
@@ -426,7 +607,7 @@ class TestApplyGeocoding:
         assert result[0].processing_status == ProcessingStatus.FAILED
         assert result[0].country == "unknown"
 
-    def test_llm_cache_deduplicates_identical_location_text(self) -> None:
+    def test_llm_country_cache_deduplicates_identical_location_text(self) -> None:
         llm_call_count = 0
 
         def counting_llm(_: str) -> str:
@@ -440,7 +621,7 @@ class TestApplyGeocoding:
             _make_event("fp3", "Belgique"),
         ]
 
-        apply_geocoding(events, ["BE"], lambda _: None, counting_llm)
+        apply_geocoding(events, ["BE"], lambda _: None, llm_country_fn=counting_llm)
 
         assert llm_call_count == 1
 

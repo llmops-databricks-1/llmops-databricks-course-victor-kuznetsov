@@ -36,11 +36,23 @@ if TYPE_CHECKING:
 
 GeocodeFn = Callable[[str], Any]
 GeoResult = tuple[float | None, float | None, str | None]
+LLMAddressFn = Callable[[str], str | None]
 LLMCountryFn = Callable[[str], str | None]
 
 # ---------------------------------------------------------------------------
-# LLM country resolution prompt
+# LLM prompts
 # ---------------------------------------------------------------------------
+
+_ADDRESS_SYSTEM = (
+    "You are a location normalizer. "
+    "Given a messy location string, extract the most concise geocodable address. "
+    "Return ONLY the normalized address suitable for a geocoder "
+    "(e.g. 'Feldafing, Bavaria, Germany' or 'Ixelles, Brussels, Belgium'). "
+    "If no specific location can be determined, return NONE. "
+    "No explanation — just the address or NONE."
+)
+
+_ADDRESS_PROMPT = "Location: {text}"
 
 _COUNTRY_SYSTEM = (
     "You are a location-to-country resolver. "
@@ -106,6 +118,53 @@ def geocode_location(
     return result
 
 
+def llm_extract_address(
+    location_text: str,
+    llm_fn: LLMAddressFn,
+    cache: dict[str, str | None],
+) -> str | None:
+    """Use an LLM to normalize messy location text into a geocodable address.
+
+    Called when Nominatim fails on the raw location_text. The returned
+    string is intended to be passed back to Nominatim for a second attempt.
+    Results are cached so identical strings trigger only one LLM call.
+
+    Args:
+        location_text: Free-text location that Nominatim failed to resolve.
+        llm_fn: Callable that sends location_text to an LLM and returns the
+            raw text response (or None on failure).
+        cache: In-memory dict keyed by location_text; mutated in place.
+
+    Returns:
+        A clean geocodable address string, or None when no specific location
+        can be extracted (LLM returns "NONE" or unrecognizable output).
+    """
+    if not location_text:
+        return None
+
+    if location_text in cache:
+        return cache[location_text]
+
+    try:
+        raw = llm_fn(location_text)
+    except Exception:
+        logger.warning("LLM address extraction error for: '{}'", location_text[:80])
+        cache[location_text] = None
+        return None
+
+    if not raw:
+        cache[location_text] = None
+        return None
+
+    cleaned = raw.strip()
+    if cleaned.upper() == "NONE" or not cleaned:
+        cache[location_text] = None
+        return None
+
+    cache[location_text] = cleaned
+    return cleaned
+
+
 def llm_resolve_country(
     location_text: str,
     llm_fn: LLMCountryFn,
@@ -158,18 +217,20 @@ def apply_geocoding(
     events: list[CleanEvent],
     target_countries: list[str],
     geocode_fn: GeocodeFn,
+    llm_address_fn: LLMAddressFn | None = None,
     llm_country_fn: LLMCountryFn | None = None,
 ) -> list[CleanEvent]:
     """Geocode events and apply country filter.
 
-    All events are returned with updated lat, lng, country, and
-    processing_status. An in-memory cache ensures identical location_text
-    strings are geocoded only once per call (respects Nominatim 1 req/s rate
-    limit when combined with RateLimiter).
+    Resolution happens in three stages, each used only when the previous fails:
 
-    When Nominatim fails to resolve a location and llm_country_fn is provided,
-    the LLM is called as a fallback. LLM-resolved events get a country code
-    but no lat/lng coordinates.
+    1. Nominatim on raw location_text → lat/lng + country
+    2. LLM extracts a clean address → Nominatim on that address → lat/lng + country
+    3. LLM returns ISO-3166-1 alpha-2 country code directly (no coordinates)
+
+    All events are returned with updated lat, lng, country, and
+    processing_status. In-memory caches ensure identical location strings
+    are processed only once per call.
 
     Status rules:
       - country in target_countries → processing_status='done'
@@ -180,13 +241,17 @@ def apply_geocoding(
         events: CleanEvent records to geocode (all should have status='new').
         target_countries: ISO-3166-1 alpha-2 codes to accept (e.g. ["NL", "BE"]).
         geocode_fn: Rate-limited geocoding callable.
-        llm_country_fn: Optional LLM fallback for strings Nominatim cannot resolve.
+        llm_address_fn: Optional LLM callable to normalize messy location text
+            into a clean geocodable address for a second Nominatim attempt.
+        llm_country_fn: Optional LLM callable of last resort — returns country
+            code when Nominatim still fails after address normalization.
 
     Returns:
         Updated events list (same length as input, order preserved).
     """
     geocode_cache: dict[str, GeoResult] = {}
-    llm_cache: dict[str, str | None] = {}
+    address_cache: dict[str, str | None] = {}
+    country_cache: dict[str, str | None] = {}
     target_set = {c.upper() for c in target_countries}
     updated: list[CleanEvent] = []
 
@@ -195,13 +260,34 @@ def apply_geocoding(
             event.location_text, geocode_fn, geocode_cache
         )
 
+        # Stage 2: LLM normalizes address → second Nominatim attempt
+        if country_code is None and llm_address_fn is not None:
+            clean_address = llm_extract_address(
+                event.location_text, llm_address_fn, address_cache
+            )
+            if clean_address is not None:
+                lat, lng, country_code = geocode_location(
+                    clean_address, geocode_fn, geocode_cache
+                )
+                if country_code is not None:
+                    logger.info(
+                        "LLM+Nominatim resolved ({}, {}) country='{}'"
+                        " for event {} via '{}'",
+                        round(lat, 4) if lat else None,
+                        round(lng, 4) if lng else None,
+                        country_code,
+                        event.fingerprint,
+                        clean_address,
+                    )
+
+        # Stage 3: LLM country-only fallback (no coordinates)
         if country_code is None and llm_country_fn is not None:
             country_code = llm_resolve_country(
-                event.location_text, llm_country_fn, llm_cache
+                event.location_text, llm_country_fn, country_cache
             )
             if country_code is not None:
                 logger.info(
-                    "LLM resolved country '{}' for event {} ('{}')",
+                    "LLM resolved country '{}' (no coordinates) for event {} ('{}')",
                     country_code,
                     event.fingerprint,
                     event.location_text[:60],
@@ -268,6 +354,31 @@ def _build_geocode_fn(env: str) -> GeocodeFn:  # pragma: no cover
 
     geolocator = Nominatim(user_agent=f"artlake-{env}")
     return RateLimiter(geolocator.geocode, min_delay_seconds=1)  # type: ignore[no-any-return]
+
+
+def _build_llm_address_fn(client: OpenAI, model: str) -> LLMAddressFn:  # pragma: no cover
+    """Return an LLM-backed address normalization callable.
+
+    The returned function sends location_text to the LLM and returns
+    its raw text response for parsing by llm_extract_address.
+    """
+
+    def extract(location_text: str) -> str | None:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _ADDRESS_SYSTEM},
+                {
+                    "role": "user",
+                    "content": _ADDRESS_PROMPT.format(text=location_text[:500]),
+                },
+            ],
+            temperature=0.0,
+            max_tokens=64,
+        )
+        return response.choices[0].message.content
+
+    return extract
 
 
 def _build_llm_country_fn(client: OpenAI, model: str) -> LLMCountryFn:  # pragma: no cover
@@ -356,6 +467,7 @@ def run_geocode(  # pragma: no cover
     from artlake.clean.events import _build_openai_client
 
     llm_client = _build_openai_client()
+    llm_address_fn = _build_llm_address_fn(llm_client, model)
     llm_country_fn = _build_llm_country_fn(llm_client, model)
 
     events = [
@@ -381,7 +493,9 @@ def run_geocode(  # pragma: no cover
         for row in rows
     ]
 
-    updated = apply_geocoding(events, target_countries, geocode_fn, llm_country_fn)
+    updated = apply_geocoding(
+        events, target_countries, geocode_fn, llm_address_fn, llm_country_fn
+    )
 
     update_schema = StructType(
         [
