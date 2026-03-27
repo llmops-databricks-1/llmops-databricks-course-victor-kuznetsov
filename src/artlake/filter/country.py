@@ -1,18 +1,20 @@
 """Geocoding + country filter (artlake-geocode entry point).
 
 Reads CleanEvent records from raw_events where processing_status='new',
-geocodes location_text via Nominatim (geopy), filters by target_countries,
+geocodes location_text via Nominatim (geopy) with an LLM fallback for
+strings that Nominatim cannot resolve, filters by target_countries,
 and updates processing_status:
-  - 'done'   → geocoded country is in target_countries
+  - 'done'   → resolved country is in target_countries
   - 'failed' → unresolvable location (country set to 'unknown') OR resolved
                country not in target_countries
 
-lat/lng are stored on all resolved events for future Phase 3 BI radius filtering.
+lat/lng are stored only when Nominatim resolves; LLM fallback provides the
+country code without coordinates (lat/lng remain None).
 
 Three country signals available downstream:
   query_country  — country from the original search query (from search_results)
   domain_country — country inferred from URL TLD (set by clean-events step)
-  country        — geocoded country from Nominatim (set by this step)
+  country        — geocoded/LLM-resolved country (set by this step)
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
+from openai import OpenAI
 
 from artlake.models.event import CleanEvent, ProcessingStatus
 
@@ -33,6 +36,21 @@ if TYPE_CHECKING:
 
 GeocodeFn = Callable[[str], Any]
 GeoResult = tuple[float | None, float | None, str | None]
+LLMCountryFn = Callable[[str], str | None]
+
+# ---------------------------------------------------------------------------
+# LLM country resolution prompt
+# ---------------------------------------------------------------------------
+
+_COUNTRY_SYSTEM = (
+    "You are a location-to-country resolver. "
+    "Given a location string, return ONLY the ISO 3166-1 alpha-2 country code "
+    "(e.g. DE, BE, NL, FR). "
+    "If the country cannot be determined, return UNKNOWN. "
+    "No explanation, no punctuation — just the 2-letter code or UNKNOWN."
+)
+
+_COUNTRY_PROMPT = "Location: {text}"
 
 # ---------------------------------------------------------------------------
 # Pure geocoding helpers (fully testable without Spark or network)
@@ -88,10 +106,59 @@ def geocode_location(
     return result
 
 
+def llm_resolve_country(
+    location_text: str,
+    llm_fn: LLMCountryFn,
+    cache: dict[str, str | None],
+) -> str | None:
+    """Use an LLM to extract the ISO-3166-1 alpha-2 country code from location_text.
+
+    Called as a fallback when Nominatim cannot geocode the location. Does not
+    provide lat/lng — only the country code. Results are cached so identical
+    strings trigger only one LLM call.
+
+    Args:
+        location_text: Free-text location that Nominatim failed to resolve.
+        llm_fn: Callable that sends location_text to an LLM and returns the
+            raw text response (or None on failure).
+        cache: In-memory dict keyed by location_text; mutated in place.
+
+    Returns:
+        Uppercased 2-letter country code, or None when the LLM cannot
+        determine the country (returns "UNKNOWN" or invalid output).
+    """
+    if not location_text:
+        return None
+
+    if location_text in cache:
+        return cache[location_text]
+
+    try:
+        raw = llm_fn(location_text)
+    except Exception:
+        logger.warning("LLM country resolution error for: '{}'", location_text[:80])
+        cache[location_text] = None
+        return None
+
+    if not raw:
+        cache[location_text] = None
+        return None
+
+    cleaned = raw.strip().upper()
+    if cleaned == "UNKNOWN" or len(cleaned) < 2 or not cleaned[:2].isalpha():
+        cache[location_text] = None
+        return None
+
+    code = cleaned[:2]
+    cache[location_text] = code
+    return code
+
+
 def apply_geocoding(
     events: list[CleanEvent],
     target_countries: list[str],
     geocode_fn: GeocodeFn,
+    llm_country_fn: LLMCountryFn | None = None,
 ) -> list[CleanEvent]:
     """Geocode events and apply country filter.
 
@@ -99,6 +166,10 @@ def apply_geocoding(
     processing_status. An in-memory cache ensures identical location_text
     strings are geocoded only once per call (respects Nominatim 1 req/s rate
     limit when combined with RateLimiter).
+
+    When Nominatim fails to resolve a location and llm_country_fn is provided,
+    the LLM is called as a fallback. LLM-resolved events get a country code
+    but no lat/lng coordinates.
 
     Status rules:
       - country in target_countries → processing_status='done'
@@ -109,16 +180,32 @@ def apply_geocoding(
         events: CleanEvent records to geocode (all should have status='new').
         target_countries: ISO-3166-1 alpha-2 codes to accept (e.g. ["NL", "BE"]).
         geocode_fn: Rate-limited geocoding callable.
+        llm_country_fn: Optional LLM fallback for strings Nominatim cannot resolve.
 
     Returns:
         Updated events list (same length as input, order preserved).
     """
-    cache: dict[str, GeoResult] = {}
+    geocode_cache: dict[str, GeoResult] = {}
+    llm_cache: dict[str, str | None] = {}
     target_set = {c.upper() for c in target_countries}
     updated: list[CleanEvent] = []
 
     for event in events:
-        lat, lng, country_code = geocode_location(event.location_text, geocode_fn, cache)
+        lat, lng, country_code = geocode_location(
+            event.location_text, geocode_fn, geocode_cache
+        )
+
+        if country_code is None and llm_country_fn is not None:
+            country_code = llm_resolve_country(
+                event.location_text, llm_country_fn, llm_cache
+            )
+            if country_code is not None:
+                logger.info(
+                    "LLM resolved country '{}' for event {} ('{}')",
+                    country_code,
+                    event.fingerprint,
+                    event.location_text[:60],
+                )
 
         if country_code is None:
             updated.append(
@@ -183,21 +270,49 @@ def _build_geocode_fn(env: str) -> GeocodeFn:  # pragma: no cover
     return RateLimiter(geolocator.geocode, min_delay_seconds=1)  # type: ignore[no-any-return]
 
 
+def _build_llm_country_fn(client: OpenAI, model: str) -> LLMCountryFn:  # pragma: no cover
+    """Return an LLM-backed country resolution callable.
+
+    The returned function sends location_text to the LLM and returns
+    its raw text response for parsing by llm_resolve_country.
+    """
+
+    def resolve(location_text: str) -> str | None:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _COUNTRY_SYSTEM},
+                {
+                    "role": "user",
+                    "content": _COUNTRY_PROMPT.format(text=location_text[:500]),
+                },
+            ],
+            temperature=0.0,
+            max_tokens=10,
+        )
+        return response.choices[0].message.content
+
+    return resolve
+
+
 def run_geocode(  # pragma: no cover
     raw_events_table: str,
     target_countries: list[str],
     env: str = "dev",
+    model: str = "databricks-meta-llama-3-3-70b-instruct",
 ) -> int:
     """Geocode new CleanEvent rows in raw_events and update via MERGE INTO.
 
     Reads rows where processing_status='new', geocodes location_text via
-    Nominatim (1 req/s rate-limited), applies country filter, and updates
-    lat/lng/country/processing_status in the Delta table on fingerprint.
+    Nominatim (1 req/s rate-limited) with LLM fallback for unresolvable
+    strings, applies country filter, and updates lat/lng/country/
+    processing_status in the Delta table on fingerprint.
 
     Args:
         raw_events_table: Fully-qualified raw_events Delta table.
         target_countries: ISO-3166-1 alpha-2 codes to accept (e.g. ["NL", "BE"]).
         env: Deployment environment tag used as Nominatim user_agent suffix.
+        model: Databricks Foundation Model ID used for LLM country fallback.
 
     Returns:
         Number of events accepted (processing_status set to 'done').
@@ -238,6 +353,11 @@ def run_geocode(  # pragma: no cover
 
     geocode_fn = _build_geocode_fn(env)
 
+    from artlake.clean.events import _build_openai_client
+
+    llm_client = _build_openai_client()
+    llm_country_fn = _build_llm_country_fn(llm_client, model)
+
     events = [
         CleanEvent(
             fingerprint=row["fingerprint"],
@@ -261,7 +381,7 @@ def run_geocode(  # pragma: no cover
         for row in rows
     ]
 
-    updated = apply_geocoding(events, target_countries, geocode_fn)
+    updated = apply_geocoding(events, target_countries, geocode_fn, llm_country_fn)
 
     update_schema = StructType(
         [
@@ -325,9 +445,15 @@ def main() -> None:  # pragma: no cover
         default="dev",
         help="Deployment environment (dev/tst/acc/prd)",
     )
+    parser.add_argument(
+        "--model",
+        default="databricks-meta-llama-3-3-70b-instruct",
+        help="Databricks Foundation Model ID for LLM country fallback",
+    )
     args = parser.parse_args()
     run_geocode(
         raw_events_table=args.raw_events_table,
         target_countries=args.target_countries,
         env=args.env,
+        model=args.model,
     )

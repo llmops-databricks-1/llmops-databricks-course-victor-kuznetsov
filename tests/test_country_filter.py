@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import HttpUrl
 
-from artlake.filter.country import apply_geocoding, geocode_location
+from artlake.filter.country import apply_geocoding, geocode_location, llm_resolve_country
 from artlake.models.event import CleanEvent, ProcessingStatus
 
 # ---------------------------------------------------------------------------
@@ -152,6 +152,89 @@ class TestGeocodeLocation:
 
 
 # ---------------------------------------------------------------------------
+# llm_resolve_country
+# ---------------------------------------------------------------------------
+
+
+class TestLLMResolveCountry:
+    def test_success_returns_uppercased_code(self) -> None:
+        cache: dict = {}
+        result = llm_resolve_country("Belgique", lambda _: "be", cache)
+        assert result == "BE"
+
+    def test_unknown_response_returns_none(self) -> None:
+        cache: dict = {}
+        result = llm_resolve_country("somewhere", lambda _: "UNKNOWN", cache)
+        assert result is None
+
+    def test_empty_location_returns_none_without_calling_fn(self) -> None:
+        call_count = 0
+
+        def counting_fn(_: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "DE"
+
+        cache: dict = {}
+        result = llm_resolve_country("", counting_fn, cache)
+        assert result is None
+        assert call_count == 0
+
+    def test_result_stored_in_cache(self) -> None:
+        cache: dict = {}
+        llm_resolve_country("Belgique", lambda _: "BE", cache)
+        assert "Belgique" in cache
+        assert cache["Belgique"] == "BE"
+
+    def test_cache_hit_skips_fn(self) -> None:
+        call_count = 0
+
+        def counting_fn(_: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "DE"
+
+        cache: dict = {}
+        llm_resolve_country("Berlin", counting_fn, cache)
+        llm_resolve_country("Berlin", counting_fn, cache)
+        assert call_count == 1
+
+    def test_none_response_returns_none(self) -> None:
+        cache: dict = {}
+        result = llm_resolve_country("mystery", lambda _: None, cache)
+        assert result is None
+
+    def test_exception_returns_none_and_caches(self) -> None:
+        call_count = 0
+
+        def failing_fn(_: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("LLM error")
+
+        cache: dict = {}
+        result = llm_resolve_country("somewhere", failing_fn, cache)
+        llm_resolve_country("somewhere", failing_fn, cache)
+        assert result is None
+        assert call_count == 1
+
+    def test_non_alpha_response_returns_none(self) -> None:
+        cache: dict = {}
+        result = llm_resolve_country("123 Main St", lambda _: "42", cache)
+        assert result is None
+
+    def test_response_with_extra_whitespace_parsed(self) -> None:
+        cache: dict = {}
+        result = llm_resolve_country("Feldafing", lambda _: "  de  ", cache)
+        assert result == "DE"
+
+    def test_takes_first_two_chars_of_valid_response(self) -> None:
+        cache: dict = {}
+        result = llm_resolve_country("Amsterdam", lambda _: "NL (Netherlands)", cache)
+        assert result == "NL"
+
+
+# ---------------------------------------------------------------------------
 # apply_geocoding
 # ---------------------------------------------------------------------------
 
@@ -287,6 +370,79 @@ class TestApplyGeocoding:
         assert result[0].query_country == "NL"
         assert result[0].domain_country == "NL"
         assert result[0].country == "NL"
+
+    def test_llm_fallback_used_when_nominatim_fails(self) -> None:
+        event = _make_event("fp1", "Belgique")
+
+        result = apply_geocoding(
+            [event], ["BE"], lambda _: None, llm_country_fn=lambda _: "BE"
+        )
+
+        assert result[0].processing_status == ProcessingStatus.DONE
+        assert result[0].country == "BE"
+        assert result[0].lat is None
+        assert result[0].lng is None
+
+    def test_llm_fallback_not_called_when_nominatim_succeeds(self) -> None:
+        llm_call_count = 0
+
+        def counting_llm(_: str) -> str:
+            nonlocal llm_call_count
+            llm_call_count += 1
+            return "NL"
+
+        event = _make_event("fp1", "Amsterdam")
+        apply_geocoding(
+            [event], ["NL"], lambda _: MockLocation(52.37, 4.89, "nl"), counting_llm
+        )
+
+        assert llm_call_count == 0
+
+    def test_llm_fallback_out_of_target_gets_failed(self) -> None:
+        event = _make_event("fp1", "Luxembourg")
+
+        result = apply_geocoding(
+            [event], ["NL", "BE"], lambda _: None, llm_country_fn=lambda _: "LU"
+        )
+
+        assert result[0].processing_status == ProcessingStatus.FAILED
+        assert result[0].country == "LU"
+
+    def test_llm_fallback_returns_none_gets_unknown(self) -> None:
+        event = _make_event("fp1", "gibberish form text xyz")
+
+        result = apply_geocoding(
+            [event], ["NL"], lambda _: None, llm_country_fn=lambda _: "UNKNOWN"
+        )
+
+        assert result[0].processing_status == ProcessingStatus.FAILED
+        assert result[0].country == "unknown"
+
+    def test_no_llm_fn_still_fails_on_unresolvable(self) -> None:
+        event = _make_event("fp1", "mystery location")
+
+        result = apply_geocoding([event], ["NL"], lambda _: None)
+
+        assert result[0].processing_status == ProcessingStatus.FAILED
+        assert result[0].country == "unknown"
+
+    def test_llm_cache_deduplicates_identical_location_text(self) -> None:
+        llm_call_count = 0
+
+        def counting_llm(_: str) -> str:
+            nonlocal llm_call_count
+            llm_call_count += 1
+            return "BE"
+
+        events = [
+            _make_event("fp1", "Belgique"),
+            _make_event("fp2", "Belgique"),
+            _make_event("fp3", "Belgique"),
+        ]
+
+        apply_geocoding(events, ["BE"], lambda _: None, counting_llm)
+
+        assert llm_call_count == 1
 
 
 # ---------------------------------------------------------------------------
