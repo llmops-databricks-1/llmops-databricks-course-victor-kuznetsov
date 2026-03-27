@@ -82,26 +82,32 @@ class TestLoadPlatforms:
 
 
 class TestBuildSocialQueries:
-    def test_produces_one_triple_per_query_per_platform(self) -> None:
-        triples = _build_social_queries([_QUERY_NL], _PLATFORMS_FB_IG)
-        assert len(triples) == 2
+    def test_produces_one_tuple_per_query_per_platform(self) -> None:
+        tuples = _build_social_queries([_QUERY_NL], _PLATFORMS_FB_IG)
+        assert len(tuples) == 2
 
     def test_query_string_contains_site_operator(self) -> None:
-        triples = _build_social_queries([_QUERY_NL], _PLATFORMS_FB_ONLY)
-        query_str, language, source = triples[0]
+        tuples = _build_social_queries([_QUERY_NL], _PLATFORMS_FB_ONLY)
+        query_str, language, source, country_code = tuples[0]
         assert "site:facebook.com/events" in query_str
         assert "kunsttentoonstelling Nederland" in query_str
         assert language == "nl"
         assert source == "facebook"
+        assert country_code == "NL"
 
     def test_all_three_platforms(self) -> None:
-        triples = _build_social_queries([_QUERY_NL], _PLATFORMS)
-        sources = [t[2] for t in triples]
+        tuples = _build_social_queries([_QUERY_NL], _PLATFORMS)
+        sources = [t[2] for t in tuples]
         assert set(sources) == {"facebook", "instagram", "linkedin"}
 
     def test_multiple_queries_cross_product(self) -> None:
-        triples = _build_social_queries([_QUERY_NL, _QUERY_DE], _PLATFORMS_FB_IG)
-        assert len(triples) == 4
+        tuples = _build_social_queries([_QUERY_NL, _QUERY_DE], _PLATFORMS_FB_IG)
+        assert len(tuples) == 4
+
+    def test_country_code_propagated(self) -> None:
+        tuples = _build_social_queries([_QUERY_NL, _QUERY_DE], _PLATFORMS_FB_ONLY)
+        country_codes = [t[3] for t in tuples]
+        assert country_codes == ["NL", "DE"]
 
     def test_empty_queries_returns_empty(self) -> None:
         assert _build_social_queries([], _PLATFORMS) == []

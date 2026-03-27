@@ -35,6 +35,7 @@ class RawEvent(BaseModel):
     raw_html: str | None = None
     scraped_at: datetime | None = None
     language: str
+    query_country: str | None = None
     artifact_urls: list[str] = []
     ingested_at: datetime = Field(default_factory=_now)
 
@@ -52,6 +53,8 @@ class CleanEvent(BaseModel):
     location_text: str
     lat: float | None = None
     lng: float | None = None
+    query_country: str | None = None
+    domain_country: str | None = None
     country: str | None = None
     language: str
     source: str

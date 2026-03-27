@@ -24,7 +24,8 @@ dependencies = [
     "ddgs==9.11.4",
     "requests==2.32.3",
     "beautifulsoup4==4.13.4",
-    "dateparser==1.2.1"
+    "dateparser==1.2.1",
+    "geopy==2.4.1"
 ]
 
 [project.scripts]
@@ -37,6 +38,7 @@ artlake-scrape-pages = "artlake.scrape.pages:main"
 artlake-clean-events = "artlake.clean.events:main"
 artlake-generate-language-patterns = "artlake.clean.patterns:main"
 artlake-download-artifacts = "artlake.scrape.download:main"
+artlake-geocode = "artlake.filter.country:main"
 
 [project.optional-dependencies]
 dev = ["databricks-connect>=17.0, <18",
@@ -120,6 +122,8 @@ module = [
     "bs4",
     "requests",
     "dateparser",
+    "geopy",
+    "geopy.*",
     "ddgs",
     "ddgs.*",
     "pandas",
