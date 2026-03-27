@@ -15,6 +15,7 @@ class ProcessingStatus(StrEnum):
 
     NEW = "new"
     PROCESSING = "processing"
+    DOWNLOADED = "downloaded"
     DONE = "done"
     FAILED = "failed"
     OUTDATED = "outdated"
@@ -84,15 +85,16 @@ class GoldEvent(BaseModel):
 
 
 class EventArtifact(BaseModel):
-    """Artifact metadata written to staging.artifacts."""
+    """Artifact metadata written to bronze.artifacts."""
 
     model_config = ConfigDict(strict=True)
 
+    fingerprint: str
+    event_fingerprint: str
     url: HttpUrl
     artifact_type: str
+    content_hash: str | None = None
     file_path: str | None = None
-    extracted_text: str | None = None
-    llm_summary: str | None = None
     processing_status: ProcessingStatus = ProcessingStatus.NEW
     ingested_at: datetime = Field(default_factory=_now)
 

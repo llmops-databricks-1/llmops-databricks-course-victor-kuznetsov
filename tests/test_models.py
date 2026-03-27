@@ -165,26 +165,33 @@ class TestGoldEvent:
 class TestEventArtifact:
     def test_valid_minimal(self) -> None:
         artifact = EventArtifact(
+            fingerprint="abc123",
+            event_fingerprint="evfp456",
             url="https://example.com/file.pdf",
             artifact_type="pdf",
         )
         assert artifact.processing_status == ProcessingStatus.NEW
         assert artifact.file_path is None
+        assert artifact.content_hash is None
 
     def test_valid_full(self) -> None:
         artifact = EventArtifact(
+            fingerprint="abc123",
+            event_fingerprint="evfp456",
             url="https://example.com/poster.jpg",
             artifact_type="image",
+            content_hash="deadbeef" * 8,
             file_path="/volumes/raw_artifacts/abc/poster.jpg",
-            extracted_text="Open call for painters",
-            llm_summary="Deadline: 2026-07-01",
             processing_status=ProcessingStatus.DONE,
         )
         assert artifact.processing_status == ProcessingStatus.DONE
+        assert artifact.content_hash == "deadbeef" * 8
 
     def test_invalid_processing_status(self) -> None:
         with pytest.raises(ValidationError):
             EventArtifact(
+                fingerprint="abc123",
+                event_fingerprint="evfp456",
                 url="https://example.com/file.pdf",
                 artifact_type="pdf",
                 processing_status="unknown",
@@ -269,6 +276,7 @@ class TestProcessingStatus:
         assert set(ProcessingStatus) == {
             ProcessingStatus.NEW,
             ProcessingStatus.PROCESSING,
+            ProcessingStatus.DOWNLOADED,
             ProcessingStatus.DONE,
             ProcessingStatus.FAILED,
             ProcessingStatus.OUTDATED,
