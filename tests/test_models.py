@@ -98,12 +98,30 @@ class TestCleanEvent:
             location_text="Amsterdam",
             lat=52.3676,
             lng=4.9041,
+            query_country="NL",
+            domain_country="NL",
             country="NL",
             language="en",
             source="duckduckgo",
             url="https://example.com/market",
         )
         assert event.country == "NL"
+        assert event.query_country == "NL"
+        assert event.domain_country == "NL"
+
+    def test_country_fields_default_to_none(self) -> None:
+        event = CleanEvent(
+            fingerprint="abc123",
+            title="Art Market",
+            description="Annual art market",
+            location_text="Amsterdam",
+            language="en",
+            source="duckduckgo",
+            url="https://example.com/market",
+        )
+        assert event.query_country is None
+        assert event.domain_country is None
+        assert event.country is None
 
     def test_missing_required(self) -> None:
         with pytest.raises(ValidationError):

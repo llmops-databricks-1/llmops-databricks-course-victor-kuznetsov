@@ -22,7 +22,9 @@ _SOURCE = "duckduckgo"
 _RATE_LIMIT_SLEEP_S = 2.0
 
 
-def _make_event(result: dict[str, str], language: str) -> RawEvent | None:
+def _make_event(
+    result: dict[str, str], language: str, query_country: str | None = None
+) -> RawEvent | None:
     """Map a single DDGS result dict to a RawEvent.
 
     Returns None if required fields (href, title) are missing.
@@ -42,6 +44,7 @@ def _make_event(result: dict[str, str], language: str) -> RawEvent | None:
             snippet=snippet,
             source=_SOURCE,
             language=language,
+            query_country=query_country,
         )
     except Exception:
         logger.warning("Skipping result with invalid URL: {}", url[:120])
@@ -97,7 +100,7 @@ def search_web(
             continue
 
         for raw in results:
-            event = _make_event(raw, query.language)
+            event = _make_event(raw, query.language, query.country_code)
             if event is not None:
                 events.append(event)
 
@@ -163,6 +166,7 @@ def write_results(events: list[RawEvent], table: str, env: str = "dev") -> None:
             "snippet": e.snippet,
             "source": e.source,
             "language": e.language,
+            "query_country": e.query_country,
             "ingested_at": e.ingested_at,
         }
         for e in events

@@ -39,19 +39,24 @@ def load_platforms(platforms_path: Path) -> dict[str, str]:
 def _build_social_queries(
     queries: list[SearchQuery],
     platforms: dict[str, str],
-) -> list[tuple[str, str, str]]:
-    """Return (query_string, language, source) triples.
+) -> list[tuple[str, str, str, str]]:
+    """Return (query_string, language, source, country_code) 4-tuples.
 
     Combines each SearchQuery with a site: operator for every platform.
     """
     return [
-        (f"{q.query} {site}", q.language, name)
+        (f"{q.query} {site}", q.language, name, q.country_code)
         for q in queries
         for name, site in platforms.items()
     ]
 
 
-def _make_event(result: dict[str, str], language: str, source: str) -> RawEvent | None:
+def _make_event(
+    result: dict[str, str],
+    language: str,
+    source: str,
+    query_country: str | None = None,
+) -> RawEvent | None:
     """Map a single DDGS result dict to a RawEvent.
 
     Returns None if required fields (href, title) are missing.
@@ -71,6 +76,7 @@ def _make_event(result: dict[str, str], language: str, source: str) -> RawEvent 
             snippet=snippet,
             source=source,
             language=language,
+            query_country=query_country,
         )
     except Exception:
         logger.warning("Skipping result with invalid URL: {}", url[:120])
@@ -102,8 +108,10 @@ def search_social(
     events: list[RawEvent] = []
     social_queries = _build_social_queries(queries, platforms)
 
-    for query_str, language, source in social_queries:
-        logger.info("Searching: '{}' [source={}]", query_str, source)
+    for query_str, language, source, country_code in social_queries:
+        logger.info(
+            "Searching: '{}' [source={}, country={}]", query_str, source, country_code
+        )
         try:
             results = client.text(query_str, max_results=max_results)
         except RatelimitException:
@@ -123,7 +131,7 @@ def search_social(
             continue
 
         for raw in results:
-            event = _make_event(raw, language, source)
+            event = _make_event(raw, language, source, country_code)
             if event is not None:
                 events.append(event)
 

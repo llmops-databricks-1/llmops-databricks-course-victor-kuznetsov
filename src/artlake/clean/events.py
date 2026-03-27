@@ -323,6 +323,7 @@ def _make_clean_event(
     fields: dict[str, str | None],
     status: ProcessingStatus,
     target_countries: list[str],
+    query_country: str | None = None,
 ) -> CleanEvent:
     return CleanEvent(
         fingerprint=page.fingerprint,
@@ -335,7 +336,8 @@ def _make_clean_event(
         source=_source_from_url(str(page.url)),
         url=page.url,
         artifact_urls=page.artifact_urls,
-        country=_country_from_url(str(page.url), target_countries),
+        query_country=query_country,
+        domain_country=_country_from_url(str(page.url), target_countries),
         processing_status=status,
     )
 
@@ -351,6 +353,7 @@ def clean_page(
     client: OpenAI,
     model: str,
     patterns: LanguagePatterns,
+    query_country: str | None = None,
 ) -> CleanEvent:
     """Apply the extraction funnel to a single ScrapedPage and return a CleanEvent.
 
@@ -368,6 +371,8 @@ def clean_page(
         model: Model ID for LLM fallback extraction.
         patterns: LanguagePatterns providing languages, target_countries, and
             location_keywords for rule-based extraction.
+        query_country: ISO-3166-1 alpha-2 country code from the original search
+            query (from search_results join). Stored as-is for downstream use.
     """
     location_re = build_field_re(patterns.location_keywords)
     title_re = build_field_re(patterns.title_keywords)
@@ -387,6 +392,7 @@ def clean_page(
             fields,
             ProcessingStatus.OUTDATED,
             patterns.target_countries,
+            query_country=query_country,
         )
 
     # Step 3 — rule-based field extraction
@@ -414,6 +420,7 @@ def clean_page(
                     fields,
                     ProcessingStatus.OUTDATED,
                     patterns.target_countries,
+                    query_country=query_country,
                 )
 
     # Step 5 — determine final status
@@ -426,7 +433,14 @@ def clean_page(
         logger.warning("Incomplete extraction, manual validation needed: {}", page.url)
 
     return _make_clean_event(
-        page, language, date_start, date_end, fields, status, patterns.target_countries
+        page,
+        language,
+        date_start,
+        date_end,
+        fields,
+        status,
+        patterns.target_countries,
+        query_country=query_country,
     )
 
 
@@ -469,6 +483,8 @@ def _clean_event_schema() -> StructType:  # pragma: no cover
             StructField("location_text", StringType(), False),
             StructField("lat", FloatType(), True),
             StructField("lng", FloatType(), True),
+            StructField("query_country", StringType(), True),
+            StructField("domain_country", StringType(), True),
             StructField("country", StringType(), True),
             StructField("language", StringType(), False),
             StructField("source", StringType(), False),
@@ -565,12 +581,19 @@ def run_clean_one(  # pragma: no cover
 
     pages_df = spark.table(scraped_pages_table).filter(F.col("url") == url)
 
-    # Join for language
+    # Join for language and query_country
     if spark.catalog.tableExists(search_results_table):
-        lang_df = spark.table(search_results_table).select("url", "language")
+        search_df = spark.table(search_results_table)
+        join_cols = ["url", "language"]
+        if "query_country" in search_df.columns:
+            join_cols.append("query_country")
+        lang_df = search_df.select(*join_cols)
         pages_df = pages_df.join(lang_df, on="url", how="left")
+        if "query_country" not in pages_df.columns:
+            pages_df = pages_df.withColumn("query_country", F.lit(None).cast("string"))
     else:
         pages_df = pages_df.withColumn("language", F.lit("unknown"))
+        pages_df = pages_df.withColumn("query_country", F.lit(None).cast("string"))
 
     pages_df = pages_df.fillna({"language": "unknown"})
 
@@ -595,7 +618,8 @@ def run_clean_one(  # pragma: no cover
             error=row["error"],
         )
         language = row["language"] or "unknown"
-        event = clean_page(page, language, client, model, patterns)
+        query_country = row["query_country"] or None
+        event = clean_page(page, language, client, model, patterns, query_country)
         r = event.model_dump(mode="python")
         r["url"] = str(r["url"])
         r["ingested_at"] = str(r["ingested_at"])
@@ -640,12 +664,19 @@ def run_clean(  # pragma: no cover
         F.col("processing_status") == ProcessingStatus.NEW
     )
 
-    # Join with search_results to get language; default to 'unknown' if missing
+    # Join with search_results to get language and query_country; default if missing
     if spark.catalog.tableExists(search_results_table):
-        lang_df = spark.table(search_results_table).select("url", "language")
+        search_df = spark.table(search_results_table)
+        join_cols = ["url", "language"]
+        if "query_country" in search_df.columns:
+            join_cols.append("query_country")
+        lang_df = search_df.select(*join_cols)
         pages_df = pages_df.join(lang_df, on="url", how="left")
+        if "query_country" not in pages_df.columns:
+            pages_df = pages_df.withColumn("query_country", F.lit(None).cast("string"))
     else:
         pages_df = pages_df.withColumn("language", F.lit("unknown"))
+        pages_df = pages_df.withColumn("query_country", F.lit(None).cast("string"))
 
     pages_df = pages_df.fillna({"language": "unknown"})
 
@@ -668,7 +699,8 @@ def run_clean(  # pragma: no cover
             error=row["error"],
         )
         language = row["language"] or "unknown"
-        event = clean_page(page, language, client, model, patterns)
+        query_country = row["query_country"] or None
+        event = clean_page(page, language, client, model, patterns, query_country)
         # mode="python" preserves datetime objects — required for TimestampType columns
         r = event.model_dump(mode="python")
         r["url"] = str(r["url"])
