@@ -92,7 +92,7 @@ Orchestrated as **Databricks Workflows**. Each step is a `.whl` entry point exec
 | Staging | `artlake.staging.search_results` | Raw search results, tagged with query language and source. `fingerprint` (sha2 of URL). |
 | Staging | `artlake.staging.seen_urls` | All URLs written by dedup — presence = seen. Persists across runs. Schema: url, title, source, fingerprint (sha2), ingested_at. |
 | Staging | `artlake.staging.scraped_pages` | Raw page content (title, body text, hrefs), artifact URLs. `fingerprint` (sha2, PK). `processing_status` column. |
-| Staging | `artlake.staging.artifacts` | Artifact metadata and UC Volume file paths. `processing_status` column. |
+| Bronze | `artlake.bronze.artifacts` | Downloaded artifact metadata and UC Volume file paths. `processing_status` column. |
 | Bronze | `artlake.bronze.raw_events` | Structured clean events (title, description, dates, location, lat/lng, country, language, source, url, `fingerprint`). `fingerprint` = sha2(url, 256) — consistent join key across all tables. |
 | Bronze | `artlake.bronze.translated_events` | Events translated to configured language (default: English) |
 | Gold | `artlake.gold.events` | Categorised (open_call / market / exhibition / workshop / other), enriched with artifact summaries |

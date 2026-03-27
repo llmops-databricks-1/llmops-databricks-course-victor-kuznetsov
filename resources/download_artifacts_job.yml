@@ -1,0 +1,56 @@
+resources:
+  jobs:
+    download_artifacts_job:
+      name: download-artifacts
+      tags:
+        project_name: "artlake"
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/*.whl
+
+      tasks:
+        - task_key: list_artifacts
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-download-artifacts
+            package_name: artlake
+            parameters:
+              - "--mode"
+              - "list"
+              - "--raw-events-table"
+              - "artlake.bronze.raw_events"
+              - "--artifacts-table"
+              - "artlake.bronze.artifacts"
+              - "--env"
+              - "${bundle.target}"
+
+        - task_key: download_artifacts
+          depends_on:
+            - task_key: list_artifacts
+          for_each_task:
+            inputs: "{{tasks.list_artifacts.values.urls}}"
+            concurrency: 5
+            task:
+              task_key: download_artifact_iteration
+              max_retries: 1
+              environment_key: default
+              python_wheel_task:
+                entry_point: artlake-download-artifacts
+                package_name: artlake
+                parameters:
+                  - "--mode"
+                  - "download"
+                  - "--artifact-url"
+                  - "{{input}}"
+                  - "--raw-events-table"
+                  - "artlake.bronze.raw_events"
+                  - "--artifacts-table"
+                  - "artlake.bronze.artifacts"
+                  - "--volume-root"
+                  - "/Volumes/artlake/volumes/raw_artifacts"
+                  - "--env"
+                  - "${bundle.target}"
