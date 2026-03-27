@@ -10,6 +10,7 @@ import yaml
 from loguru import logger
 
 from artlake.models.event import RawEvent
+from artlake.scrape.pages import fingerprint as make_fingerprint
 from artlake.search.load import load_queries
 from artlake.search.models import SearchQuery
 from artlake.search.web import write_results
@@ -64,6 +65,7 @@ def _make_event(result: dict[str, str], language: str, source: str) -> RawEvent 
 
     try:
         return RawEvent(
+            fingerprint=make_fingerprint(url),
             url=url,  # type: ignore[arg-type]
             title=title,
             snippet=snippet,

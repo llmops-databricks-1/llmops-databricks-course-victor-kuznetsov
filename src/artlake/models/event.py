@@ -18,6 +18,7 @@ class ProcessingStatus(StrEnum):
     DONE = "done"
     FAILED = "failed"
     OUTDATED = "outdated"
+    REQUIRES_MANUAL_VALIDATION = "requires_manual_validation"
 
 
 class RawEvent(BaseModel):
@@ -25,6 +26,7 @@ class RawEvent(BaseModel):
 
     model_config = ConfigDict(strict=True)
 
+    fingerprint: str
     url: HttpUrl
     title: str
     snippet: str
@@ -41,6 +43,7 @@ class CleanEvent(BaseModel):
 
     model_config = ConfigDict(strict=True)
 
+    fingerprint: str
     title: str
     description: str
     date_start: datetime | None = None

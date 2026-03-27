@@ -295,6 +295,7 @@ class TestMain:
         mock_queries = [_QUERY_NL]
         mock_events = [
             RawEvent(
+                fingerprint="abc123",
                 url="https://www.facebook.com/events/1",  # type: ignore[arg-type]
                 title="Test Event",
                 snippet="snippet",
@@ -334,6 +335,7 @@ class TestMain:
         queries = [_QUERY_NL, _QUERY_DE]
         batch_events = [
             RawEvent(
+                fingerprint=f"fp{i}",
                 url=f"https://www.facebook.com/events/{i}",  # type: ignore[arg-type]
                 title=f"Event {i}",
                 snippet="snippet",

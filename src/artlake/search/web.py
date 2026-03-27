@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from artlake.models.event import RawEvent
+from artlake.scrape.pages import fingerprint as make_fingerprint
 from artlake.search.load import load_queries
 from artlake.search.models import SearchQuery
 
@@ -35,6 +36,7 @@ def _make_event(result: dict[str, str], language: str) -> RawEvent | None:
 
     try:
         return RawEvent(
+            fingerprint=make_fingerprint(url),
             url=url,  # type: ignore[arg-type]
             title=title,
             snippet=snippet,
@@ -155,6 +157,7 @@ def write_results(events: list[RawEvent], table: str, env: str = "dev") -> None:
 
     rows = [
         {
+            "fingerprint": e.fingerprint,
             "url": str(e.url),
             "title": e.title,
             "snippet": e.snippet,

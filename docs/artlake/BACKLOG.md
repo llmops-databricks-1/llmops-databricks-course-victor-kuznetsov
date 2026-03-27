@@ -1,8 +1,54 @@
 # ArtLake — Phase 1 & 2 Backlog Plan
 
+## Status overview
+
+### Done ✅
+| Story | Issue | Description |
+|---|---|---|
+| Pre-req | [#6](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/6) | Configure databricks.yml |
+| 1.1 | [#7](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/7) | Core data models (Pydantic schemas) |
+| 1.2 | [#8](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/8) | Multilingual keyword + query generation |
+| 1.3 | [#9](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/9) | DuckDuckGo search (general queries) |
+| 1.4 | [#10](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/10) | Social media site-scoped search |
+| 1.5 | [#11](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/11) | Deduplication + seen-URL tracking |
+| 1.6 | [#12](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/12) | Web page content scraper (for_each) |
+| 1.9 | [#15](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/15) | Clean events + language pattern generation (for_each) |
+
+### Up next — Phase 1 completion 🔜
+| Story | Issue | Description | Blocked by |
+|---|---|---|---|
+| 1.7 | [#13](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/13) | Artifact downloader (PDFs & images → UC Volumes) | #15 ✅ |
+| 1.8 | [#14](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/14) | Geocoding + country filter | #15 ✅ |
+| 1.10 | [#21](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/21) | Ingestion workflow definition | #13, #14 |
+
+### Phase 2: Processing 🔜
+| Story | Issue | Description | Blocked by |
+|---|---|---|---|
+| 2.1 | [#22](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/22) | Content translation | #15 ✅ |
+| 2.2 | [#16](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/16) | Artifact processing (ai_parse_document + LLM summary) | #13 |
+| 2.3 | [#17](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/17) | Rule-based event categorisation | #22 |
+| 2.4 | [#18](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/18) | LLM-based event categorisation | #17 |
+| 2.5 | [#19](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/19) | Vector embedding generation | #22, #17 |
+| 2.6 | [#23](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/23) | Processing workflow definition | #22, #16, #17, #19 |
+| 2.7 | [#20](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/20) | Vector Search index setup | #19 |
+| 2.8 | [#24](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/24) | End-to-end integration test | #21, #23 |
+
+### Recommended sequence
+```
+Now:   #14 (geocode) ── parallel ── #13 (artifact dl)
+            └──────────────────────────── #21 (ingestion workflow)
+                                               │
+       #22 (translate) ─── #17 (categorise) ─── #19 (embed) ─── #23 (processing workflow)
+                       └── #16 (artifact proc) ─┘
+                                          └── #20 (vector search)
+                                                       └── #24 (E2E test)
+```
+
+---
+
 ## Context
 
-ArtLake has architecture docs, ADRs, repo standards, CI, and tooling in place — but no application code yet. We need to create GitHub issues for the **Ingestion** and **Data Processing** phases. Phase 3 (Serving) deferred.
+ArtLake has architecture docs, ADRs, repo standards, CI, and tooling in place. Phase 1 ingestion is largely complete (#6–#12, #15). Phase 3 (Serving) deferred.
 
 ### Key decisions
 - **No notebooks for processing** — all steps are `.whl` entry points via `python_wheel_task`
@@ -47,7 +93,8 @@ src/artlake/
 │   └── country.py           #   Geocoding + country filter         → artlake-geocode
 │
 ├── clean/                   # Raw → structured field extraction
-│   └── events.py            #   Parse dates, normalise fields      → artlake-clean-events
+│   ├── events.py            #   Parse dates, normalise fields      → artlake-clean-events
+│   └── patterns.py          #   Generate multilingual field-label patterns via LLM → artlake-generate-language-patterns
 │
 ├── categorise/              # Event type classification
 │   ├── rules.py             #   Keyword-based (multilingual)       → artlake-categorise-rules
@@ -88,7 +135,7 @@ Used on `scraped_pages` and `artifacts`. Downstream tasks read rows where upstre
 **Ingestion workflow:**
 ```
 artlake-generate-queries → artlake-search → artlake-search-social → artlake-dedup → artlake-scrape-pages
-→ artlake-clean-events → artlake-geocode → artlake-download-artifacts
+→ artlake-generate-language-patterns → artlake-clean-events (for_each) → artlake-geocode → artlake-download-artifacts
 ```
 
 **Processing workflow:**
@@ -100,19 +147,19 @@ artlake-translate → artlake-process-artifacts → artlake-categorise-rules →
 
 ## Pre-requisite
 
-### Configure databricks.yml — [#6](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/6)
+### ✅ Configure databricks.yml — [#6](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/6)
 
 ---
 
 ## Phase 1: Ingestion (Stories 1.1–1.10)
 
-### 1.1 — Core data models (Pydantic schemas) — [#7](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/7)
+### ✅ 1.1 — Core data models (Pydantic schemas) — [#7](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/7)
 
 **Modules:** `models/event.py`, `models/config.py`
 
 **Models:**
-- `RawEvent` — url, title, snippet, source, raw_html, scraped_at, language (from query), artifact_urls
-- `CleanEvent` — title, description, date_start, date_end, location_text, lat, lng, country, language, source, url, artifact_paths
+- `RawEvent` — fingerprint (sha2), url, title, snippet, source, raw_html, scraped_at, language (from query), artifact_urls
+- `CleanEvent` — fingerprint (sha2), title, description, date_start, date_end, location_text, lat, lng, country, language, source, url, artifact_urls, artifact_paths
 - `GoldEvent` — extends CleanEvent with category, artifact_summaries
 - `EventArtifact` — url, artifact_type (pdf/image), file_path, extracted_text, llm_summary
 - `SeenUrl` — url, title, source, fingerprint (sha2(url, 256)), ingested_at
@@ -125,7 +172,7 @@ artlake-translate → artlake-process-artifacts → artlake-categorise-rules →
 
 ---
 
-### 1.2 — Multilingual keyword generation — [#8](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/8)
+### ✅ 1.2 — Multilingual keyword generation — [#8](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/8)
 
 **Module:** `search/generate.py` → entry point `artlake-generate-queries`
 
@@ -142,7 +189,7 @@ artlake-translate → artlake-process-artifacts → artlake-categorise-rules →
 
 ---
 
-### 1.3 — DuckDuckGo search (general queries) — [#9](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/9)
+### ✅ 1.3 — DuckDuckGo search (general queries) — [#9](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/9)
 
 **Module:** `search/web.py` → `artlake-search`
 
@@ -160,7 +207,7 @@ artlake-translate → artlake-process-artifacts → artlake-categorise-rules →
 
 ---
 
-### 1.4 — Social media site-scoped search — [#10](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/10)
+### ✅ 1.4 — Social media site-scoped search — [#10](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/10)
 
 **Module:** `search/social.py` → `artlake-search-social`
 
@@ -191,7 +238,7 @@ Platforms are hand-authored config (not generated), so this file lives in `confi
 
 ---
 
-### 1.5 — Deduplication + seen-URL tracking — [#11](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/11)
+### ✅ 1.5 — Deduplication + seen-URL tracking — [#11](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/11)
 
 **Module:** `filter/dedup.py` → `artlake-dedup`
 
@@ -209,7 +256,7 @@ Platforms are hand-authored config (not generated), so this file lives in `confi
 
 ---
 
-### 1.6 — Web page content scraper — [#12](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/12)
+### ✅ 1.6 — Web page content scraper — [#12](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/12)
 
 **Module:** `scrape/pages.py` → `artlake-scrape-pages`
 
@@ -244,7 +291,7 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 ---
 
-### 1.7 — Artifact downloader — [#13](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/13)
+### 🔜 1.7 — Artifact downloader — [#13](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/13)
 
 **Module:** `scrape/download.py` → `artlake-download-artifacts`
 
@@ -264,7 +311,7 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 ---
 
-### 1.8 — Geocoding + country filter — [#14](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/14)
+### 🔜 1.8 — Geocoding + country filter — [#14](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/14)
 
 **Module:** `filter/country.py` → `artlake-geocode`
 
@@ -287,31 +334,40 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 ---
 
-### 1.9 — Clean events (raw → structured) — [#15](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/15)
+### ✅ 1.9 — Clean events (raw → structured) — [#15](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/15)
 
-**Module:** `clean/events.py` → `artlake-clean-events`
+**Modules:**
+- `clean/patterns.py` → `artlake-generate-language-patterns` — reads `keywords.yml`, calls LLM once to generate multilingual field-label patterns, writes `config/output/language_patterns.yml`.
+- `clean/events.py` → `artlake-clean-events` — two-mode entry point with `for_each_task` parallelism.
 
 **Behaviour:**
-- Read from `artlake.staging.scraped_pages` where `processing_status = 'new'`
-- Parse dates (ISO, natural language, European dd/mm/yyyy)
-- Normalise titles, descriptions, location text
-- Copy `artifact_urls` from `scraped_pages` to `CleanEvent`
-- Write `CleanEvent` records to `artlake.bronze.raw_events`:
-  - `processing_status = 'outdated'` if `date_end < today` (or `date_start < today` when no end date)
-  - `processing_status = 'new'` otherwise (including events with no detected date)
+- `artlake-generate-language-patterns`: derive languages/target_countries from `keywords.yml`, call LLM for title/location field labels per language, write `language_patterns.yml` (mirrors `artlake-generate-queries` pattern)
+- `artlake-clean-events --mode list`: anti-join `scraped_pages` (`processing_status = 'new'`) and emit URL list as Databricks task value for `for_each_task`
+- `artlake-clean-events --mode clean --url <url>`: process one page per for_each iteration:
+  - Parse dates (ISO, natural language, European dd/mm/yyyy)
+  - Normalise title, description, location via rule-based extraction (using `language_patterns.yml` field labels per language)
+  - LLM fallback when fields are incomplete
+  - Copy `artifact_urls` and `fingerprint` from `scraped_pages` to `CleanEvent`
+  - Write to `artlake.bronze.raw_events`:
+    - `processing_status = 'outdated'` if `date_end < today`
+    - `processing_status = 'requires_manual_validation'` if extraction fails after LLM
+    - `processing_status = 'new'` otherwise
 
 **Acceptance criteria:**
-- [ ] Date parsing handles ISO, natural language, European dd/mm/yyyy formats
-- [ ] Events with past dates written with `processing_status = 'outdated'`
-- [ ] Events with no detected date written with `processing_status = 'new'`
-- [ ] Null handling for missing fields (description, dates, coordinates)
-- [ ] Unit tests for each parsing function
+- [x] Date parsing handles ISO, natural language, European dd/mm/yyyy formats
+- [x] Events with past dates written with `processing_status = 'outdated'`
+- [x] Events with no detected date written with `processing_status = 'new'`
+- [x] Null handling for missing fields (description, dates, coordinates)
+- [x] Unit tests for each parsing function
 - [ ] Integration test for Delta write (`@pytest.mark.integration`)
-- [ ] Entry point `artlake-clean-events` declared in `pyproject.toml`
+- [x] Entry point `artlake-clean-events` declared in `pyproject.toml`
+- [x] Entry point `artlake-generate-language-patterns` declared in `pyproject.toml`
+- [x] `for_each_task` pattern in `resources/clean_events_job.yml`
+- [x] `fingerprint` propagated from `scraped_pages` to `raw_events`
 
 ---
 
-### 1.10 — Ingestion workflow definition — [#21](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/21)
+### 🔜 1.10 — Ingestion workflow definition — [#21](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/21)
 
 **Workflow:** `resources/ingest_events_job.yml`
 
@@ -329,7 +385,7 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 ## Phase 2: Data Processing (Stories 2.1–2.8)
 
-### 2.1 — Content translation — [#22](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/22)
+### 🔜 2.1 — Content translation — [#22](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/22)
 
 **Module:** `translate/content.py` → `artlake-translate`
 
@@ -349,7 +405,7 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 ---
 
-### 2.2 — Artifact processing (`ai_parse_document` + LLM summary) — [#16](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/16)
+### 🔜 2.2 — Artifact processing (`ai_parse_document` + LLM summary) — [#16](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/16)
 
 **Module:** `process_artifacts/extract.py` → `artlake-process-artifacts`
 
@@ -368,7 +424,7 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 ---
 
-### 2.3 — Rule-based event categorisation — [#17](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/17)
+### 🔜 2.3 — Rule-based event categorisation — [#17](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/17)
 
 **Module:** `categorise/rules.py` → `artlake-categorise-rules`
 
@@ -386,7 +442,7 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 ---
 
-### 2.4 — LLM-based event categorisation — [#18](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/18)
+### 🔜 2.4 — LLM-based event categorisation — [#18](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/18)
 
 **Module:** `categorise/llm.py` → `artlake-categorise-llm`
 
@@ -402,7 +458,7 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 ---
 
-### 2.5 — Vector embedding generation — [#19](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/19)
+### 🔜 2.5 — Vector embedding generation — [#19](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/19)
 
 **Module:** `embed/generate.py` → `artlake-embed`
 
@@ -417,7 +473,7 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 ---
 
-### 2.6 — Processing workflow definition — [#23](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/23)
+### 🔜 2.6 — Processing workflow definition — [#23](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/23)
 
 **Workflow:** `resources/process_events_job.yml`
 
@@ -432,7 +488,7 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 ---
 
-### 2.7 — Vector Search index setup — [#20](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/20)
+### 🔜 2.7 — Vector Search index setup — [#20](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/20)
 
 **Module:** `embed/vector_search.py` (one-time setup)
 
@@ -447,7 +503,7 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 ---
 
-### 2.8 — End-to-end integration test — [#24](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/24)
+### 🔜 2.8 — End-to-end integration test — [#24](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/24)
 
 **Behaviour:**
 - Run full ingestion workflow (search → clean-events) with test fixtures (mocked search results, saved HTML pages)
