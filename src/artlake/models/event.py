@@ -61,6 +61,7 @@ class CleanEvent(BaseModel):
     url: HttpUrl
     artifact_urls: list[str] = []
     artifact_paths: list[str] = []
+    category: str | None = None
     processing_status: ProcessingStatus = ProcessingStatus.NEW
     ingested_at: datetime = Field(default_factory=_now)
 
