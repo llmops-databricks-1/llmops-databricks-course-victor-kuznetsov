@@ -12,36 +12,36 @@
 | 1.4 | [#10](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/10) | Social media site-scoped search |
 | 1.5 | [#11](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/11) | Deduplication + seen-URL tracking |
 | 1.6 | [#12](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/12) | Web page content scraper (for_each) |
+| 1.7 | [#13](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/13) | Artifact downloader (PDFs & images → UC Volumes) |
+| 1.8 | [#14](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/14) | Geocoding + country filter |
 | 1.9 | [#15](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/15) | Clean events + language pattern generation (for_each) |
 
-### Up next — Phase 1 completion 🔜
+### Up next — ingestion filter + workflow 🔜
 | Story | Issue | Description | Blocked by |
 |---|---|---|---|
-| 1.7 | [#13](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/13) | Artifact downloader (PDFs & images → UC Volumes) | #15 ✅ |
-| 1.8 | [#14](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/14) | Geocoding + country filter | #15 ✅ |
-| 1.10 | [#21](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/21) | Ingestion workflow definition | #13, #14 |
+| 2.3 | [#17](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/17) | Rule-based event categorisation (ingestion filter, gates geocode) | #15 ✅ |
+| 2.4 | [#18](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/18) | LLM-based event categorisation (ingestion filter, gates download) | #17 |
+| 1.10 | [#21](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/21) | Ingestion workflow definition | #17, #18 |
 
 ### Phase 2: Processing 🔜
 | Story | Issue | Description | Blocked by |
 |---|---|---|---|
-| 2.1 | [#22](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/22) | Content translation | #15 ✅ |
-| 2.2 | [#16](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/16) | Artifact processing (ai_parse_document + LLM summary) | #13 |
-| 2.3 | [#17](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/17) | Rule-based event categorisation | #22 |
-| 2.4 | [#18](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/18) | LLM-based event categorisation | #17 |
-| 2.5 | [#19](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/19) | Vector embedding generation | #22, #17 |
-| 2.6 | [#23](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/23) | Processing workflow definition | #22, #16, #17, #19 |
+| 2.2 | [#16](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/16) | Artifact processing (ai_parse_document + LLM summary) | #13 ✅ |
+| 2.1 | [#22](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/22) | Content translation (events + artifact summaries) | #16, #18 |
+| 2.5 | [#19](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/19) | Vector embedding generation | #22 |
+| 2.6 | [#23](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/23) | Processing workflow definition | #16, #22, #19 |
 | 2.7 | [#20](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/20) | Vector Search index setup | #19 |
 | 2.8 | [#24](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/24) | End-to-end integration test | #21, #23 |
 
 ### Recommended sequence
 ```
-Now:   #14 (geocode) ── parallel ── #13 (artifact dl)
-            └──────────────────────────── #21 (ingestion workflow)
-                                               │
-       #22 (translate) ─── #17 (categorise) ─── #19 (embed) ─── #23 (processing workflow)
-                       └── #16 (artifact proc) ─┘
-                                          └── #20 (vector search)
-                                                       └── #24 (E2E test)
+Now:   #17 (categorise-rules) → #18 (categorise-llm) → #21 (ingestion workflow)
+
+       #16 (artifact proc) → #22 (translate: events + artifact summaries) → #19 (embed) → #23 (processing workflow)
+                                                                                                │
+                                                                                           #20 (vector search)
+                                                                                                │
+                                                                                           #24 (E2E test)
 ```
 
 ---
@@ -58,9 +58,10 @@ ArtLake has architecture docs, ADRs, repo standards, CI, and tooling in place. P
 - **No separate language detection** — search queries are generated per target language; results tagged with query language. No lingua-based post-filter.
 - **Seen-URLs tracking** — unseen URLs written to Delta table as a persistent set. Fingerprint is `sha2(url, 256)` — no normalization needed; DuckDuckGo returns canonical URLs and exact hash match covers all real duplicates.
 - **Artifacts** — detect, download, and process PDFs/images. `ai_parse_document` (Databricks-native SQL function) for PDF text extraction and image OCR. Raw files in UC Volumes.
-- **Categorisation** — rule-based MVP first, then LLM upgrade.
+- **Parallel search** — `artlake-search` and `artlake-search-social` run in parallel; both write to `search_results`; `artlake-dedup` waits on both.
+- **Categorisation gates geocoding** — rule-based + LLM categorisation runs in the ingestion workflow right after `clean_events`, before `geocode` and artifact download. `non_art` events are filtered here — they never reach geocoding, artifact download, translation, or embedding, cutting all downstream compute costs.
 - **Social media** — separate story from general search.
-- **Content translation** — all scraped content is translated to the configured language (default: English) via Foundation Model API before processing. No need for multilingual embeddings or classification.
+- **Content translation includes artifact summaries** — `artlake-translate` runs after artifact processing (#16) and joins `raw_events` with `artifacts` to translate both event fields (title, description, location) and artifact extracted text / LLM summaries. This gives embeddings full document content from PDFs and images. Translate depends on artifact processing; embed depends on translate.
 - **Processing status tracking** — `processing_status` column (`new` → `processing` → `done` / `failed`) used only on tables for expensive operations (`scraped_pages`, `artifacts`). Not used on `search_results` or `seen_urls`.
 - **No Playwright** — `beautifulsoup4` + `requests` for page scraping. SerpAPI (paid) as upgrade path when richer content extraction is needed.
 - **Config via DAB** — pipeline configuration via DAB variables or a bundled YAML file deployed with DAB artifacts (decision pending).
@@ -121,9 +122,9 @@ artlake.staging.search_results   ← search writes here (tagged with query langu
 artlake.staging.seen_urls        ← dedup reads/writes (persists across runs)
 artlake.staging.scraped_pages    ← scrape writes here (processing_status)
 artlake.staging.artifacts        ← download/process writes here (processing_status)
-artlake.bronze.raw_events        ← clean-events writes here (original language)
-artlake.bronze.translated_events ← translate enriches with configured language text
-artlake.gold.events              ← categorise writes here
+artlake.bronze.raw_events        ← clean-events writes here (original language); categorise-rules + categorise-llm update category column
+artlake.bronze.translated_events ← translate writes here (art-only, geocoded events; event fields + artifact summaries, all in configured language)
+artlake.gold.events              ← written after translation (final categorised + translated events)
 artlake.gold.embeddings          ← embed writes here (from translated content)
 ```
 
@@ -134,13 +135,23 @@ Used on `scraped_pages` and `artifacts`. Downstream tasks read rows where upstre
 
 **Ingestion workflow:**
 ```
-artlake-generate-queries → artlake-search → artlake-search-social → artlake-dedup → artlake-scrape-pages
-→ artlake-generate-language-patterns → artlake-clean-events (for_each) → artlake-geocode → artlake-download-artifacts
+artlake-generate-queries ──┬── artlake-search ──────────┐
+                            └── artlake-search-social ───┴── artlake-dedup
+                                                                    │
+artlake-generate-language-patterns ──┬── artlake-scrape-pages (for_each, list+scrape)
+                                      └──────────────────────────────────────────────┐
+                                                               artlake-clean-events (for_each, list+clean)
+                                                                    │
+                                                       artlake-categorise-rules → artlake-categorise-llm
+                                                                    │ (non_art filtered out)
+                                                              artlake-geocode
+                                                                    │
+                                                       artlake-download-artifacts (for_each, list+download)
 ```
 
 **Processing workflow:**
 ```
-artlake-translate → artlake-process-artifacts → artlake-categorise-rules → artlake-embed
+artlake-process-artifacts → artlake-translate (events + artifact summaries) → artlake-embed
 ```
 
 ---
@@ -291,17 +302,25 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 ---
 
-### 🔜 1.7 — Artifact downloader — [#13](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/13)
+### ✅ 1.7 — Artifact downloader — [#13](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/13)
 
 **Module:** `scrape/download.py` → `artlake-download-artifacts`
 
+**Depends on:** #17 (categorise-rules), #18 (categorise-llm)
+
 **Behaviour:**
-- Read `artifact_urls` from `artlake.bronze.raw_events` where `processing_status = 'done'` (geocoded, non-outdated events only)
-- Download PDFs/images to UC Volume: `artlake/volumes/raw_artifacts/{event_fingerprint}/{filename}`
-- Create `EventArtifact` records
-- Skip files > configurable max size
+
+Two-mode entry point (`for_each_task` pattern, mirrors scrape and clean steps):
+
+- `--mode list` — read `artifact_urls` from `artlake.bronze.raw_events` where `category NOT IN ('non_art') AND processing_status = 'done'` (art-only, geocoded events); emit artifact list as Databricks task value for `for_each_task`
+- `--mode download --fingerprint <fp> --url <artifact_url>` — download one artifact per iteration:
+  - Download PDFs/images to UC Volume: `artlake/volumes/raw_artifacts/{event_fingerprint}/{filename}`
+  - Write `EventArtifact` record to `artlake.staging.artifacts` with `processing_status = 'new'`
+  - Skip files > configurable max size
 
 **Acceptance criteria:**
+- [ ] Two-mode entry point (`--mode list` / `--mode download`) following the for_each pattern
+- [ ] Reads only art-categorised, geocoded events (`category NOT IN ('non_art') AND processing_status = 'done'`)
 - [ ] Handles PDF, JPG, PNG, WEBP
 - [ ] Content-hash deduplication (skip identical files already downloaded)
 - [ ] Configurable max file size
@@ -311,24 +330,25 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 ---
 
-### 🔜 1.8 — Geocoding + country filter — [#14](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/14)
+### ✅ 1.8 — Geocoding + country filter — [#14](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/14)
 
 **Module:** `filter/country.py` → `artlake-geocode`
 
 **Behaviour:**
-- Read `CleanEvent` records from `artlake.bronze.raw_events` where `processing_status = 'new'` (excludes `outdated` events)
+- Read `CleanEvent` records from `artlake.bronze.raw_events` where `category NOT IN ('non_art') AND processing_status = 'new'` (art-relevant events only — non_art filtered by categorise steps upstream)
 - Geocode `location_text` → (lat, lng, country) via `geopy` + Nominatim (ADR-003)
 - Keep events in `target_countries`; filter out others
 - Set `processing_status = 'done'` on accepted events; `processing_status = 'failed'` on unresolvable (country kept as `'unknown'`)
 - Lat/lng stored for future Phase 3 BI radius filtering (ADR-013)
 
 **Acceptance criteria:**
-- [ ] Reads from `raw_events` where `processing_status = 'new'`
-- [ ] Geocoding result caching to respect Nominatim 1 req/s rate limit
-- [ ] Unresolvable locations: keep event, set country=`"unknown"`, `processing_status = 'failed'`
-- [ ] Unit tests with known locations and expected countries
-- [ ] Country detection from geocoded coordinates
-- [ ] Entry point `artlake-geocode` declared in `pyproject.toml`
+- [x] Reads from `raw_events` where `processing_status = 'new'`
+- [ ] **Follow-up:** add `category NOT IN ('non_art')` filter to skip non-art events (categorise now runs before geocode in the ingestion workflow)
+- [x] Geocoding result caching to respect Nominatim 1 req/s rate limit
+- [x] Unresolvable locations: keep event, set country=`"unknown"`, `processing_status = 'failed'`
+- [x] Unit tests with known locations and expected countries
+- [x] Country detection from geocoded coordinates
+- [x] Entry point `artlake-geocode` declared in `pyproject.toml`
 
 **Note:** Nominatim cold-start — 1 req/s with hundreds of uncached events on first run may take 10+ minutes. Accept this for MVP; consider OpenCage Geocoder (free tier: 2500 req/day) if latency becomes a problem.
 
@@ -372,14 +392,18 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 **Workflow:** `resources/ingest_events_job.yml`
 
 **Behaviour:**
-- Multi-task Databricks Workflow chaining: search → search-social → dedup → scrape-pages → clean-events → geocode → download-artifacts
+- Multi-task Databricks Workflow: `generate-queries` → [`search` ∥ `search-social`] → `dedup` → [`scrape-pages` (for_each) ∥ `generate-language-patterns`] → `clean-events` (for_each) → `categorise-rules` → `categorise-llm` → `geocode` → `download-artifacts` (for_each)
 - Each task is `python_wheel_task`
+- `search` and `search-social` run as parallel tasks (both depend on `generate-queries`, both feed `dedup`)
+- `generate-language-patterns` runs in parallel with `scrape-pages` (no shared dependency; both feed `clean-events`)
 - Scheduled daily via DAB
 
 **Acceptance criteria:**
-- All tasks reference the correct `.whl` entry points
-- Workflow deployable via `databricks bundle deploy`
-- Successful dry-run on dev target
+- [ ] All tasks reference the correct `.whl` entry points
+- [ ] `search` and `search-social` configured as parallel tasks
+- [ ] `generate-language-patterns` runs in parallel with `scrape-pages` for_each group
+- [ ] Workflow deployable via `databricks bundle deploy`
+- [ ] Successful dry-run on dev target
 
 ---
 
@@ -389,19 +413,25 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 **Module:** `translate/content.py` → `artlake-translate`
 
+**Depends on:** #16 (artifact processing), #18 (categorise-llm — confirms art category)
+
 **Behaviour:**
-- Read `CleanEvent` records from `artlake.bronze.raw_events`
-- Translate title, description, and location text to configured language (default: English) via **Foundation Model API**
-- Write to `artlake.bronze.translated_events`
+- Read art-categorised, geocoded `CleanEvent` records from `artlake.bronze.raw_events` (`category NOT IN ('non_art') AND processing_status = 'done'`)
+- Join with `artlake.staging.artifacts` to include `extracted_text` and `llm_summary` from processed artifacts
+- Translate event fields (title, description, location_text) **and** artifact text to the configured language (default: English) via **Foundation Model API**
+- Write combined translated record to `artlake.bronze.translated_events` (event fields + translated artifact summaries)
 - Skip events already in the target language (detected via query language tag)
 
-**Rationale:** Translating all content to one language eliminates the need for multilingual embeddings (GTE-large-en works well on English) and simplifies categorisation.
+**Rationale:** Artifact PDFs and images often contain the most structured content (deadlines, fees, requirements for open calls). Translating artifact text alongside event fields ensures embeddings cover the full document content. Artifact processing must complete first so its output is available for translation.
 
 **Acceptance criteria:**
-- Supports EN, NL, DE, FR → configured target language
-- Batch processing with rate limit handling
-- Fallback: if translation fails, keep original text, mark `processing_status = 'failed'`
-- Unit tests with mocked LLM
+- [ ] Reads only art-categorised, geocoded events
+- [ ] Joins with `artifacts` table to include `extracted_text` and `llm_summary` per event
+- [ ] Translates event fields and artifact text in one pass
+- [ ] Supports EN, NL, DE, FR → configured target language
+- [ ] Batch processing with rate limit handling
+- [ ] Fallback: if translation fails, keep original text, mark `processing_status = 'failed'`
+- [ ] Unit tests with mocked LLM (event-only and event+artifact cases)
 
 ---
 
@@ -409,18 +439,22 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 **Module:** `process_artifacts/extract.py` → `artlake-process-artifacts`
 
+**Depends on:** #13 (artifact downloader)
+
 **Behaviour:**
-- Read artifact file paths from UC Volumes
+- Read artifact records from `artlake.staging.artifacts` where `processing_status = 'new'`
 - PDF + image extraction via **`ai_parse_document`** (Databricks-native SQL function): `SELECT ai_parse_document(content) FROM read_files(..., format => 'binaryFile')`
 - LLM: structured summary (deadline, requirements, location, fees) via Foundation Model API
-- Update `EventArtifact` records
+- Update `EventArtifact` records in `artlake.staging.artifacts` with `extracted_text`, `llm_summary`, and `processing_status = 'done'`
+- Output feeds directly into `artlake-translate` — translate reads artifact summaries to include in translated content
 
 **Acceptance criteria:**
-- Multi-page PDFs
-- Common image formats (JPG, PNG)
-- Consistent structured LLM output
-- Fallback: if `ai_parse_document` or LLM fails, mark `processing_status = 'failed'`
-- Unit tests with sample PDFs and images
+- [ ] Reads from `artifacts` where `processing_status = 'new'`
+- [ ] Multi-page PDFs
+- [ ] Common image formats (JPG, PNG)
+- [ ] Consistent structured LLM output (deadline, requirements, location, fees fields)
+- [ ] Fallback: if `ai_parse_document` or LLM fails, mark `processing_status = 'failed'`
+- [ ] Unit tests with sample PDFs and images
 
 ---
 
@@ -428,17 +462,22 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 **Module:** `categorise/rules.py` → `artlake-categorise-rules`
 
+**Depends on:** #15 ✅
+
 **Behaviour:**
-- Read from translated events
-- Classify: open_call / market / exhibition / workshop / other via keyword matching (operates on translated content in configured language)
-- Enrich with `artifact_summaries`
-- Write `GoldEvent` records to `artlake.gold.events`
+- Read `CleanEvent` records from `artlake.bronze.raw_events` (runs **before** translation to filter non-art events early and save LLM costs)
+- Classify: `open_call` / `market` / `exhibition` / `workshop` / `non_art` / `uncertain` via multilingual keyword matching (keywords already available in `language_patterns.yml` and `keywords.yml` per language)
+- `non_art` — clearly irrelevant events; skipped by all downstream steps
+- `uncertain` — passed to LLM-based categorisation (#18) for a second opinion
+- Write category back to `artlake.bronze.raw_events`; do **not** write to `gold.events` yet (gold write happens after translation)
 
 **Acceptance criteria:**
-- Keyword dictionary for configured language (default: English)
-- Fallback to "other"
-- Unit tests per category
-- Integration test
+- [ ] Multilingual keyword dictionaries (EN, NL, DE, FR) loaded from `keywords.yml`
+- [ ] Outputs `non_art` for clearly irrelevant events and `uncertain` for borderline cases
+- [ ] Fallback to `uncertain` when no rule matches (not `other` — LLM decides)
+- [ ] Unit tests per category with representative multilingual event texts
+- [ ] Integration test for `raw_events` read/write
+- [ ] Entry point `artlake-categorise-rules` declared in `pyproject.toml`
 
 ---
 
@@ -446,15 +485,21 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 
 **Module:** `categorise/llm.py` → `artlake-categorise-llm`
 
+**Depends on:** #17
+
 **Behaviour:**
-- Foundation Model API classification with structured prompt + few-shot examples
-- Same input/output contract as rule-based (drop-in replacement)
+- Read `CleanEvent` records from `artlake.bronze.raw_events` where `category = 'uncertain'` (borderline cases not resolved by rule-based step)
+- Foundation Model API classification with structured prompt + few-shot examples — prompt handles raw multilingual content (no translation needed at this stage)
+- Outputs same categories as rule-based: `open_call` / `market` / `exhibition` / `workshop` / `non_art` (no `uncertain` — LLM must decide)
+- Writes final category back to `artlake.bronze.raw_events`
 
 **Acceptance criteria:**
-- Few-shot examples per category
-- Comparison: rules vs LLM accuracy
-- Unit tests with mocked LLM
-- Config flag to switch approaches
+- [ ] Reads only `uncertain` events from `raw_events`
+- [ ] Few-shot examples per category in multiple languages
+- [ ] No `uncertain` output — LLM always resolves to a definitive category
+- [ ] Unit tests with mocked LLM responses
+- [ ] Integration test for `raw_events` category update
+- [ ] Entry point `artlake-categorise-llm` declared in `pyproject.toml`
 
 ---
 
@@ -463,8 +508,9 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 **Module:** `embed/generate.py` → `artlake-embed`
 
 **Behaviour:**
-- Read translated event descriptions
-- Generate embeddings via Foundation Model API (GTE-large-en — works because content is pre-translated)
+- Read records from `artlake.bronze.translated_events` — each record contains translated event fields + translated artifact summaries
+- Concatenate title, description, and artifact summaries into a single text chunk per event
+- Generate embeddings via Foundation Model API (GTE-large-en — works because all content is pre-translated)
 - Store in `artlake.gold.embeddings`
 
 **Acceptance criteria:**
@@ -478,8 +524,8 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 **Workflow:** `resources/process_events_job.yml`
 
 **Behaviour:**
-- Multi-task Databricks Workflow chaining: translate → process-artifacts → categorise-rules → embed
-- All `python_wheel_task`, triggered after ingestion or scheduled via DAB
+- Multi-task Databricks Workflow: `process-artifacts` → `translate` (events + artifact summaries) → `embed`
+- All `python_wheel_task`, triggered after ingestion workflow completes or scheduled via DAB
 
 **Acceptance criteria:**
 - All tasks reference the correct `.whl` entry points
@@ -524,34 +570,46 @@ No date/location extraction at this step — deferred to downstream `artlake-cle
 ### Code dependencies (what must be implemented before what)
 
 ```
-1.1 (models) ─── 1.2 (generate-queries) ──┬── 1.3 (search web)
-                                            └── 1.4 (search social)
-                 1.1 (models) ──┬── 1.5 (dedup)
-                                ├── 1.6 (scrape pages)
-                                ├── 1.7 (artifact dl)
-                                ├── 1.8 (geocode)
-                                └── 1.9 (clean events)
-
-                 1.9 ── 2.1 (translate) ──┬── 2.3 (categorise rules) ── 2.5 (embed)
-                                           └── 2.4 (categorise LLM)
-                 1.7 ── 2.2 (process artifacts)
-                 2.5 ── 2.7 (vector search)
+1.1 (models) ─── 1.2 (generate-queries) ──┬── 1.3 (search web)   ─┐
+                                            └── 1.4 (search social) ─┴── 1.5 (dedup)
+                                                                              │
+                                                              1.6 (scrape pages, for_each)
+                                                                              │
+                                            1.9 (generate-language-patterns) ┤
+                                                                              │
+                                                               1.9 (clean events, for_each)
+                                                                              │
+                                                 2.3 (categorise rules) ── 2.4 (categorise LLM)
+                                                                              │
+                                                                      1.8 (geocode)
+                                                                              │
+                                                              1.7 (artifact dl, for_each)
+                                                                              │
+                                                              2.2 (process artifacts)
+                                                                              │
+                                                              2.1 (translate: events + artifacts)
+                                                                              │
+                                                                       2.5 (embed)
+                                                                              │
+                                                                    2.7 (vector search)
 ```
 
-**Parallelisable after 1.1 + 1.2:** stories 1.3, 1.4, 1.5, 1.6, 1.7, 1.8 can be developed concurrently (they share only the data models). At runtime, 1.3 and 1.4 depend on 1.2 having written `queries.yml`.
+**Parallelisable at runtime:** `search` ∥ `search-social`; `scrape-pages` for_each ∥ `generate-language-patterns`. Development of 1.3, 1.4, 1.5, 1.6, 1.7 can proceed concurrently (share only data models).
 
 ### Workflow dependencies (task execution order at runtime)
 
 ```
-Ingestion:  search → search-social → dedup → scrape → clean → geocode → download
-Processing: translate → process-artifacts → categorise → embed
+Ingestion:  [search ∥ search-social] → dedup → [scrape-pages (for_each) ∥ generate-language-patterns]
+                → clean-events (for_each) → categorise-rules → categorise-llm → geocode → download-artifacts (for_each)
+
+Processing: process-artifacts → translate (events + artifact summaries) → embed
 ```
 
 ### Workflow definitions (depend on all tasks in the workflow being implemented)
 
 ```
-1.10 (ingestion workflow)   blocked by: 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9
-2.6  (processing workflow)  blocked by: 2.1, 2.2, 2.3, 2.5
+1.10 (ingestion workflow)   blocked by: 1.3, 1.4, 1.5, 1.6, 1.7 (now for_each), 1.8, 1.9, 2.3, 2.4
+2.6  (processing workflow)  blocked by: 2.2, 2.1, 2.5
 2.8  (E2E test)             blocked by: 1.10, 2.6
 ```
 

@@ -1,0 +1,126 @@
+# Per-category keyword dictionaries used by artlake-categorise-rules.
+#
+# Art categories are matched first (higher precision). If none match,
+# non_art keywords are checked as a last-resort filter for clearly
+# irrelevant content. Events with no match → "uncertain" (passed to LLM).
+#
+# Languages: EN, NL, DE, FR (matching the search query languages).
+category_keywords:
+  open_call:
+    en:
+      - open call
+      - call for artists
+      - call for submissions
+      - call for entries
+      - apply now
+      - submission deadline
+      - applications open
+      - deadline to apply
+    nl:
+      - open oproep
+      - oproep voor kunstenaars
+      - inschrijvingsdeadline
+      - deadline inschrijving
+      - aanmelden voor
+    de:
+      - offener aufruf
+      - bewerbungsschluss
+      - einreichungsfrist
+      - jetzt bewerben
+    fr:
+      - appel à candidatures
+      - appel ouvert
+      - appel à artistes
+      - date limite de candidature
+
+  exhibition:
+    en:
+      - exhibition
+      - vernissage
+      - opening reception
+      - art show
+      - group show
+      - solo show
+      - gallery opening
+      - on view until
+    nl:
+      - tentoonstelling
+      - expositie
+      - vernissage
+      - galerie-opening
+    de:
+      - ausstellung
+      - vernissage
+      - galerie-eröffnung
+      - kunstausstellung
+    fr:
+      - exposition
+      - vernissage
+      - inauguration de
+
+  workshop:
+    en:
+      - workshop
+      - masterclass
+      - art class
+      - art residency
+      - artist residency
+      - art course
+    nl:
+      - workshop
+      - masterclass
+      - kunstles
+      - residentie
+    de:
+      - workshop
+      - masterclass
+      - kunstkurs
+      - künstlerresidenz
+    fr:
+      - atelier
+      - masterclass
+      - cours d'art
+      - résidence artistique
+
+  market:
+    en:
+      - art market
+      - art fair
+      - craft fair
+      - craft market
+      - artisan market
+    nl:
+      - kunstmarkt
+      - kunstbeurs
+      - ambachtsmarkt
+    de:
+      - kunstmarkt
+      - kunstmesse
+      - kunstbörse
+    fr:
+      - marché d'art
+      - marché artisanal
+      - foire d'art
+
+  non_art:
+    en:
+      - football match
+      - soccer game
+      - basketball game
+      - cooking recipe
+      - mortgage rate
+      - insurance quote
+      - cryptocurrency
+      - forex trading
+    nl:
+      - voetbalwedstrijd
+      - kookrecept
+      - hypotheekadvies
+    de:
+      - fußballspiel
+      - kochrezept
+      - versicherungsangebot
+    fr:
+      - match de football
+      - recette de cuisine
+      - devis assurance
