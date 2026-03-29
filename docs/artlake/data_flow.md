@@ -163,17 +163,19 @@ at this stage — populated by the next step.
 | Entry points | `artlake-categorise-rules`, `artlake-generate-category-examples`, `artlake-categorise-llm` |
 | Input | `artlake.bronze.raw_events`, `config/input/category_keywords.yml` |
 | Output | `config/output/category_examples.yml`, `artlake.bronze.categorised_events` |
-| Tasks | `categorise_rules` → `generate_category_examples` → `categorise_llm` |
+| Tasks | `generate_category_examples` (setup, parallel) + `categorise_rules` → `categorise_llm` |
 
-Three-task chain:
+Three tasks — `generate_category_examples` runs at job startup in parallel with
+`generate_queries`; `categorise_rules` and `categorise_llm` both wait for it:
 
-1. **`categorise_rules`** — keyword matching on `title + description`. Updates
+1. **`generate_category_examples`** *(setup phase)* — calls LLM to generate 2
+   realistic event texts per `(category, language)` pair. Cached: skips LLM
+   calls if `category_examples.yml` already exists (`overwrite=False`). Runs
+   in parallel with `generate_queries` — no dependency on any table.
+
+2. **`categorise_rules`** — keyword matching on `title + description`. Updates
    `category` in `raw_events` via `MERGE INTO`. Possible values:
    `open_call`, `exhibition`, `workshop`, `market`, `non_art`, `uncertain`.
-
-2. **`generate_category_examples`** — calls LLM to generate 2 realistic event
-   texts per `(category, language)` pair. Cached: skips LLM calls if
-   `category_examples.yml` already exists (`overwrite=False`).
 
 3. **`categorise_llm`** — reads only `uncertain` events from `raw_events`,
    classifies them via mini-batched parallel LLM calls (batch size 10,

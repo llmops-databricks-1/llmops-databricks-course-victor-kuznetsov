@@ -1,0 +1,291 @@
+resources:
+  jobs:
+    ingest_events_job:
+      name: ingest-events
+      tags:
+        project_name: "artlake"
+
+      schedule:
+        quartz_cron_expression: "0 0 0 * * ?"
+        timezone_id: "UTC"
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/*.whl
+
+      tasks:
+        - task_key: generate_queries
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-generate-queries
+            package_name: artlake
+            parameters:
+              - "--keywords"
+              - "${var.config_root}/config/input/keywords.yml"
+              - "--output"
+              - "${var.config_root}/config/output/queries.yml"
+
+        - task_key: generate_category_examples
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-generate-category-examples
+            package_name: artlake
+            parameters:
+              - "--category-keywords"
+              - "${var.config_root}/config/input/category_keywords.yml"
+              - "--output"
+              - "${var.config_root}/config/output/category_examples.yml"
+
+        - task_key: search_web
+          depends_on:
+            - task_key: generate_queries
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-search
+            package_name: artlake
+            parameters:
+              - "--queries"
+              - "${var.config_root}/config/output/queries.yml"
+              - "--table"
+              - "artlake.staging.search_results"
+              - "--max-results"
+              - "10"
+              - "--batch-size"
+              - "10"
+              - "--env"
+              - "${bundle.target}"
+
+        - task_key: search_social
+          depends_on:
+            - task_key: generate_queries
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-search-social
+            package_name: artlake
+            parameters:
+              - "--queries"
+              - "${var.config_root}/config/output/queries.yml"
+              - "--platforms"
+              - "${var.config_root}/config/input/social_platforms.yml"
+              - "--table"
+              - "artlake.staging.search_results"
+              - "--max-results"
+              - "5"
+              - "--batch-size"
+              - "5"
+              - "--env"
+              - "${bundle.target}"
+
+        - task_key: dedup
+          depends_on:
+            - task_key: search_web
+            - task_key: search_social
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-dedup
+            package_name: artlake
+            parameters:
+              - "--search-results-table"
+              - "artlake.staging.search_results"
+              - "--seen-urls-table"
+              - "artlake.staging.seen_urls"
+              - "--env"
+              - "${bundle.target}"
+
+        - task_key: list_urls_to_scrape
+          depends_on:
+            - task_key: dedup
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-scrape-pages
+            package_name: artlake
+            parameters:
+              - "--mode"
+              - "list"
+              - "--seen-urls-table"
+              - "artlake.staging.seen_urls"
+              - "--scraped-pages-table"
+              - "artlake.staging.scraped_pages"
+              - "--env"
+              - "${bundle.target}"
+
+        - task_key: scrape_pages
+          depends_on:
+            - task_key: list_urls_to_scrape
+          for_each_task:
+            inputs: "{{tasks.list_urls_to_scrape.values.urls}}"
+            concurrency: 10
+            task:
+              task_key: scrape_page_iteration
+              max_retries: 0
+              environment_key: default
+              python_wheel_task:
+                entry_point: artlake-scrape-pages
+                package_name: artlake
+                parameters:
+                  - "--mode"
+                  - "scrape"
+                  - "--url"
+                  - "{{input}}"
+                  - "--scraped-pages-table"
+                  - "artlake.staging.scraped_pages"
+                  - "--env"
+                  - "${bundle.target}"
+
+        - task_key: generate_language_patterns
+          depends_on:
+            - task_key: dedup
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-generate-language-patterns
+            package_name: artlake
+            parameters:
+              - "--keywords"
+              - "${var.config_root}/config/input/keywords.yml"
+              - "--output"
+              - "${var.config_root}/config/output/language_patterns.yml"
+
+        - task_key: list_events_to_clean
+          depends_on:
+            - task_key: scrape_pages
+            - task_key: generate_language_patterns
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-clean-events
+            package_name: artlake
+            parameters:
+              - "--mode"
+              - "list"
+              - "--scraped-pages-table"
+              - "artlake.staging.scraped_pages"
+              - "--search-results-table"
+              - "artlake.staging.search_results"
+              - "--language-patterns"
+              - "${var.config_root}/config/output/language_patterns.yml"
+              - "--env"
+              - "${bundle.target}"
+
+        - task_key: clean_events
+          depends_on:
+            - task_key: list_events_to_clean
+          for_each_task:
+            inputs: "{{tasks.list_events_to_clean.values.urls}}"
+            concurrency: 10
+            task:
+              task_key: clean_event_iteration
+              max_retries: 1
+              environment_key: default
+              python_wheel_task:
+                entry_point: artlake-clean-events
+                package_name: artlake
+                parameters:
+                  - "--mode"
+                  - "clean"
+                  - "--url"
+                  - "{{input}}"
+                  - "--scraped-pages-table"
+                  - "artlake.staging.scraped_pages"
+                  - "--search-results-table"
+                  - "artlake.staging.search_results"
+                  - "--raw-events-table"
+                  - "artlake.bronze.raw_events"
+                  - "--model"
+                  - "databricks-meta-llama-3-3-70b-instruct"
+                  - "--language-patterns"
+                  - "${var.config_root}/config/output/language_patterns.yml"
+                  - "--env"
+                  - "${bundle.target}"
+
+        - task_key: categorise_rules
+          depends_on:
+            - task_key: clean_events
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-categorise-rules
+            package_name: artlake
+            parameters:
+              - "--raw-events-table"
+              - "artlake.bronze.raw_events"
+              - "--category-keywords"
+              - "${var.config_root}/config/input/category_keywords.yml"
+
+        - task_key: categorise_llm
+          depends_on:
+            - task_key: categorise_rules
+            - task_key: generate_category_examples
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-categorise-llm
+            package_name: artlake
+            parameters:
+              - "--raw-events-table"
+              - "artlake.bronze.raw_events"
+              - "--categorised-events-table"
+              - "artlake.bronze.categorised_events"
+              - "--category-examples"
+              - "${var.config_root}/config/output/category_examples.yml"
+
+        - task_key: geocode
+          depends_on:
+            - task_key: categorise_llm
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-geocode
+            package_name: artlake
+            parameters:
+              - "--raw-events-table"
+              - "artlake.bronze.categorised_events"
+              - "--target-countries"
+              - "NL"
+              - "BE"
+              - "DE"
+              - "FR"
+              - "--env"
+              - "${bundle.target}"
+
+        - task_key: list_artifacts
+          depends_on:
+            - task_key: geocode
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-download-artifacts
+            package_name: artlake
+            parameters:
+              - "--mode"
+              - "list"
+              - "--raw-events-table"
+              - "artlake.bronze.categorised_events"
+              - "--artifacts-table"
+              - "artlake.bronze.artifacts"
+              - "--env"
+              - "${bundle.target}"
+
+        - task_key: download_artifacts
+          depends_on:
+            - task_key: list_artifacts
+          for_each_task:
+            inputs: "{{tasks.list_artifacts.values.urls}}"
+            concurrency: 5
+            task:
+              task_key: download_artifact_iteration
+              max_retries: 1
+              environment_key: default
+              python_wheel_task:
+                entry_point: artlake-download-artifacts
+                package_name: artlake
+                parameters:
+                  - "--mode"
+                  - "download"
+                  - "--artifact-url"
+                  - "{{input}}"
+                  - "--raw-events-table"
+                  - "artlake.bronze.categorised_events"
+                  - "--artifacts-table"
+                  - "artlake.bronze.artifacts"
+                  - "--volume-root"
+                  - "/Volumes/artlake/volumes/raw_artifacts"
+                  - "--env"
+                  - "${bundle.target}"
