@@ -172,6 +172,21 @@ def write_results(events: list[RawEvent], table: str, env: str = "dev") -> None:
         for e in events
     ]
     df = spark.createDataFrame(pd.DataFrame(rows))
+    # Pre-create the table to avoid a race condition when search_web and
+    # search_social both start up in parallel and both attempt the first write.
+    # CREATE TABLE IF NOT EXISTS is atomic in Unity Catalog.
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {table} (
+            fingerprint STRING,
+            url STRING,
+            title STRING,
+            snippet STRING,
+            source STRING,
+            language STRING,
+            query_country STRING,
+            ingested_at TIMESTAMP
+        ) USING DELTA
+    """)
     df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(
         table
     )
