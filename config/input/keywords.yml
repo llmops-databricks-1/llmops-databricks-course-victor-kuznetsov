@@ -1,11 +1,7 @@
 keywords:
-  - art exhibition
   - open call artists
 
 countries:
   - code: NL
     name: Netherlands
-    languages: [nl]
-  - code: BE
-    name: Belgium
     languages: [nl]

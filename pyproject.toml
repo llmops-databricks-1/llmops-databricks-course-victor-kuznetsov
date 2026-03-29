@@ -40,6 +40,8 @@ artlake-generate-language-patterns = "artlake.clean.patterns:main"
 artlake-download-artifacts = "artlake.scrape.download:main"
 artlake-geocode = "artlake.filter.country:main"
 artlake-categorise-rules = "artlake.categorise.rules:main"
+artlake-generate-category-examples = "artlake.categorise.examples:main"
+artlake-categorise-llm = "artlake.categorise.llm:main"
 
 [project.optional-dependencies]
 dev = ["databricks-connect>=17.0, <18",

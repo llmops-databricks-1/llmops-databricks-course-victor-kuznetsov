@@ -1,0 +1,41 @@
+resources:
+  jobs:
+    categorise_llm_job:
+      name: categorise-llm-test
+      tags:
+        project_name: "artlake"
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/*.whl
+
+      tasks:
+        - task_key: generate_category_examples
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-generate-category-examples
+            package_name: artlake
+            parameters:
+              - "--category-keywords"
+              - "${var.config_root}/config/input/category_keywords.yml"
+              - "--output"
+              - "${var.config_root}/config/output/category_examples.yml"
+
+        - task_key: categorise_llm_test
+          depends_on:
+            - task_key: generate_category_examples
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-categorise-llm
+            package_name: artlake
+            parameters:
+              - "--raw-events-table"
+              - "artlake.bronze.raw_events"
+              - "--categorised-events-table"
+              - "artlake.bronze.categorised_events"
+              - "--category-examples"
+              - "${var.config_root}/config/output/category_examples.yml"
+              - "--llm-categorization-test"

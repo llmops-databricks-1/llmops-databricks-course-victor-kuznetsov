@@ -80,8 +80,8 @@ Orchestrated as **Databricks Workflows**. Each step is a `.whl` entry point exec
 - **Page Scraper** (`artlake-scrape-pages`) — Two-mode entry point. `--mode list` anti-joins `seen_urls` against `scraped_pages` on `fingerprint` and emits the unseen URL list as a Databricks task value, feeding a `for_each_task` for per-URL parallelism and observability. `--mode scrape` fetches a single URL: checks `robots.txt` (stdlib `urllib.robotparser`), tries `/<domain>/llms.txt` first (higher-quality structured content where available), falls back to `requests` + BeautifulSoup raw HTML. Stores raw content only — title, body text, hrefs, artifact URLs. `fingerprint` written as PK. Date/location extraction deferred to downstream steps. Upgrade path: SerpAPI (paid) when JS-rendered pages or richer content extraction is needed.
 - **Language Pattern Generation** (`artlake-generate-language-patterns`) — reads `config/input/keywords.yml`, calls LLM once to generate multilingual field-label patterns (title labels, location labels per language), writes `config/output/language_patterns.yml`. Re-run only when `keywords.yml` changes. Mirrors the `artlake-generate-queries` pattern.
 - **Clean Events** (`artlake-clean-events`) — two-mode entry point using `for_each_task` parallelism (mirrors `artlake-scrape-pages`). `--mode list` reads `scraped_pages` (`processing_status = 'new'`) and emits the URL list as a Databricks task value. `--mode clean --url <url>` processes one page: parses dates, normalises fields via rule-based extraction (using `language_patterns.yml` for multilingual field labels) with LLM fallback, writes one `CleanEvent` to `artlake.bronze.raw_events`. Sets `processing_status = 'outdated'` for past events, `requires_manual_validation` when extraction fails, `new` otherwise.
-- **Country Filter** (`artlake-geocode`) — reads `raw_events` (`processing_status = 'new'`), resolves location text → lat/lng/country via Nominatim (ADR-003). Keeps events in `target_countries`; sets `processing_status = 'done'` on accepted, `processing_status = 'failed'` on unresolvable locations (country kept as `'unknown'`). Lat/lng stored for future Phase 3 BI radius filtering (ADR-013).
-- **Artifact Downloader** (`artlake-download-artifacts`) — reads `artifact_urls` from `raw_events` (`processing_status = 'done'`), downloads PDFs and images to Unity Catalog Volumes.
+- **Country Filter** (`artlake-geocode`) — reads `categorised_events`, resolves location text → lat/lng/country via Nominatim (ADR-003). Keeps events in `target_countries`; writes filtered results back to `categorised_events`. Lat/lng stored for future Phase 3 BI radius filtering (ADR-013).
+- **Artifact Downloader** (`artlake-download-artifacts`) — reads `artifact_urls` from `categorised_events`, downloads PDFs and images to Unity Catalog Volumes.
 
 **Note:** Language filtering is handled at the search query level (queries generated per target language), not as a separate pipeline step (ADR-004 updated).
 
@@ -93,7 +93,8 @@ Orchestrated as **Databricks Workflows**. Each step is a `.whl` entry point exec
 | Staging | `artlake.staging.seen_urls` | All URLs written by dedup — presence = seen. Persists across runs. Schema: url, title, source, fingerprint (sha2), ingested_at. |
 | Staging | `artlake.staging.scraped_pages` | Raw page content (title, body text, hrefs), artifact URLs. `fingerprint` (sha2, PK). `processing_status` column. |
 | Bronze | `artlake.bronze.artifacts` | Downloaded artifact metadata and UC Volume file paths. `processing_status` column. |
-| Bronze | `artlake.bronze.raw_events` | Structured clean events (title, description, dates, location, lat/lng, country, language, source, url, `fingerprint`). `fingerprint` = sha2(url, 256) — consistent join key across all tables. |
+| Bronze | `artlake.bronze.raw_events` | Structured clean events (title, description, dates, location, lat/lng, country, language, source, url, `fingerprint`). `fingerprint` = sha2(url, 256) — consistent join key across all tables. `category` column updated in-place by `artlake-categorise-rules` via `MERGE INTO`. |
+| Bronze | `artlake.bronze.categorised_events` | Events after full categorisation (rules → LLM). Single `category` column, no `uncertain` or `non_art`. Input to geocode and artifact download. |
 | Bronze | `artlake.bronze.translated_events` | Events translated to configured language (default: English) |
 | Gold | `artlake.gold.events` | Categorised (open_call / market / exhibition / workshop / other), enriched with artifact summaries |
 | Gold | `artlake.gold.embeddings` | Vector embeddings for semantic search (Delta Sync to Vector Search) — from translated content |
@@ -108,9 +109,10 @@ Orchestrated as **Databricks Workflows** with `python_wheel_task` entry points.
 
 - **Content Translation** (`artlake-translate`) — translates event content (title, description, location) to configured language (default: English) via Foundation Model API. Eliminates the need for multilingual embeddings and simplifies downstream categorisation.
 - **Artifact Processing** (`artlake-process-artifacts`) — `ai_parse_document` (Databricks-native SQL function) for PDF text extraction and image OCR. LLM-generated structured summaries (deadline, requirements, location, fees) via Foundation Model API.
-- **Event Categorisation** — two approaches, same input/output contract:
-  - Rule-based (`artlake-categorise-rules`) — keyword matching on translated content (MVP)
-  - LLM-based (`artlake-categorise-llm`) — Foundation Model API classification (upgrade, drop-in replacement)
+- **Event Categorisation** (`artlake-categorise-rules` + `artlake-categorise-llm`, run as `categorise_job`) — two-stage pipeline:
+  1. Rule-based (`artlake-categorise-rules`) — keyword matching on title/description; updates `category` in `raw_events` via `MERGE INTO`. Categories: `open_call`, `exhibition`, `workshop`, `market`, `non_art`, `uncertain`.
+  2. LLM-based (`artlake-categorise-llm`) — reads uncertain events from `raw_events`, resolves them via Foundation Model API with few-shot examples, writes final `categorised_events` (single `category` column, no `uncertain` or `non_art`).
+  - Test mode (`--llm-categorization-test`, triggered via `categorise-llm-test` job) — runs LLM on all events and adds `category_llm` column alongside rule-based `category` for auditing agreement at scale.
 - **Embedding Generation** (`artlake-embed`) — GTE-large-en via Databricks Foundation Model API. Works well because content is pre-translated to English. Stored in Delta for Vector Search sync.
 
 ### AI / RAG Layer
