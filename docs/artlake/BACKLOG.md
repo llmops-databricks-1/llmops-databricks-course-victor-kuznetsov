@@ -392,7 +392,7 @@ Two-mode entry point (`for_each_task` pattern, mirrors scrape and clean steps):
 **Workflow:** `resources/ingest_events_job.yml`
 
 **Behaviour:**
-- Multi-task Databricks Workflow: `generate-queries` → [`search` ∥ `search-social`] → `dedup` → [`scrape-pages` (for_each) ∥ `generate-language-patterns`] → `clean-events` (for_each) → `categorise-rules` → `categorise-llm` → `geocode` → `download-artifacts` (for_each)
+- Multi-task Databricks Workflow: [`generate-queries` ∥ `generate-category-examples`] → [`search` ∥ `search-social`] → `dedup` → [`scrape-pages` (for_each) ∥ `generate-language-patterns`] → `clean-events` (for_each) → `categorise-rules` → `categorise-llm` → `geocode` → `download-artifacts` (for_each)
 - Each task is `python_wheel_task`
 - `search` and `search-social` run as parallel tasks (both depend on `generate-queries`, both feed `dedup`)
 - `generate-language-patterns` runs in parallel with `scrape-pages` (no shared dependency; both feed `clean-events`)
