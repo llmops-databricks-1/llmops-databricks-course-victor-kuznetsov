@@ -1,7 +1,7 @@
 resources:
   jobs:
-    categorise_rules_job:
-      name: categorise-rules
+    generate_category_examples_job:
+      name: generate-category-examples
       tags:
         project_name: "artlake"
 
@@ -13,13 +13,13 @@ resources:
               - ../dist/*.whl
 
       tasks:
-        - task_key: categorise_rules
+        - task_key: generate_category_examples
           environment_key: default
           python_wheel_task:
-            entry_point: artlake-categorise-rules
+            entry_point: artlake-generate-category-examples
             package_name: artlake
             parameters:
-              - "--raw-events-table"
-              - "artlake.bronze.raw_events"
               - "--category-keywords"
               - "${var.config_root}/config/input/category_keywords.yml"
+              - "--output"
+              - "${var.config_root}/config/output/category_examples.yml"

@@ -20,7 +20,7 @@ resources:
             package_name: artlake
             parameters:
               - "--raw-events-table"
-              - "artlake.bronze.raw_events"
+              - "artlake.bronze.categorised_events"
               - "--target-countries"
               - "NL"
               - "BE"

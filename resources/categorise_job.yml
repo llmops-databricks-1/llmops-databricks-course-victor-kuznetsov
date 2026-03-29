@@ -1,0 +1,53 @@
+resources:
+  jobs:
+    categorise_job:
+      name: categorise
+      tags:
+        project_name: "artlake"
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/*.whl
+
+      tasks:
+        - task_key: categorise_rules
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-categorise-rules
+            package_name: artlake
+            parameters:
+              - "--raw-events-table"
+              - "artlake.bronze.raw_events"
+              - "--category-keywords"
+              - "${var.config_root}/config/input/category_keywords.yml"
+
+        - task_key: generate_category_examples
+          depends_on:
+            - task_key: categorise_rules
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-generate-category-examples
+            package_name: artlake
+            parameters:
+              - "--category-keywords"
+              - "${var.config_root}/config/input/category_keywords.yml"
+              - "--output"
+              - "${var.config_root}/config/output/category_examples.yml"
+
+        - task_key: categorise_llm
+          depends_on:
+            - task_key: generate_category_examples
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-categorise-llm
+            package_name: artlake
+            parameters:
+              - "--raw-events-table"
+              - "artlake.bronze.raw_events"
+              - "--categorised-events-table"
+              - "artlake.bronze.categorised_events"
+              - "--category-examples"
+              - "${var.config_root}/config/output/category_examples.yml"
