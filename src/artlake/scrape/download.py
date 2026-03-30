@@ -3,7 +3,7 @@
 Entry point: artlake-download-artifacts
 
 Reads artifact_urls from artlake.bronze.raw_events where processing_status = 'done',
-downloads files to UC Volume, and writes EventArtifact records to staging.artifacts.
+downloads files to UC Volume, and writes EventArtifact records to bronze.raw_artifacts.
 """
 
 from __future__ import annotations
@@ -56,16 +56,16 @@ def detect_artifact_type(url: str, content_type: str | None = None) -> str:
     return "image"
 
 
-def volume_path(volume_root: str, event_fingerprint: str, url: str) -> str:
+def volume_path(volume_root: str, event_id: str, url: str) -> str:
     """Build the UC Volume path for an artifact.
 
-    Format: {volume_root}/{event_fingerprint}/{filename}
+    Format: {volume_root}/{event_id}/{filename}
 
     When the URL has no filename component, the artifact URL fingerprint is used
     as the filename.
     """
     filename = PurePosixPath(urlparse(url).path).name or url_fingerprint(url)
-    return f"{volume_root.rstrip('/')}/{event_fingerprint}/{filename}"
+    return f"{volume_root.rstrip('/')}/{event_id}/{filename}"
 
 
 def download_artifact(
@@ -112,7 +112,7 @@ def download_artifact(
 
 def make_artifact(
     url: str,
-    event_fingerprint: str,
+    event_id: str,
     artifact_type: str,
     file_path: str | None,
     status: ProcessingStatus,
@@ -122,8 +122,8 @@ def make_artifact(
     from pydantic import HttpUrl as PydanticHttpUrl
 
     return EventArtifact(
-        fingerprint=url_fingerprint(url),
-        event_fingerprint=event_fingerprint,
+        id=url_fingerprint(url),
+        event_id=event_id,
         url=PydanticHttpUrl(url),
         artifact_type=artifact_type,
         content_hash=content_hash_val,
@@ -142,8 +142,8 @@ def _artifact_schema() -> StructType:  # pragma: no cover
 
     return StructType(
         [
-            StructField("fingerprint", StringType(), False),
-            StructField("event_fingerprint", StringType(), False),
+            StructField("id", StringType(), False),
+            StructField("event_id", StringType(), False),
             StructField("url", StringType(), False),
             StructField("artifact_type", StringType(), False),
             StructField("content_hash", StringType(), True),
@@ -273,9 +273,7 @@ def run_download(  # pragma: no cover
 
     _ensure_volume(spark, volume_root)
 
-    # Resolve parent event URL from raw_events, then compute fingerprint locally.
-    # We use the event URL rather than a stored fingerprint column because older
-    # table snapshots may pre-date the fingerprint column addition.
+    # Resolve parent event URL from raw_events and compute its ID locally.
     _SKIP_STATUSES = [ProcessingStatus.OUTDATED, ProcessingStatus.FAILED]
     rows = (
         spark.table(raw_events_table)
@@ -291,14 +289,14 @@ def run_download(  # pragma: no cover
         logger.warning("No matching raw_event found for artifact URL: {}", artifact_url)
         return
 
-    event_fingerprint: str = url_fingerprint(rows[0]["url"])
+    event_id: str = url_fingerprint(rows[0]["url"])
     artifact_type = detect_artifact_type(artifact_url)
 
     data, content_type, error = download_artifact(artifact_url, max_bytes=max_bytes)
 
     if data is None:
         artifact = make_artifact(
-            artifact_url, event_fingerprint, artifact_type, None, ProcessingStatus.FAILED
+            artifact_url, event_id, artifact_type, None, ProcessingStatus.FAILED
         )
         _write_artifact(spark, artifact, artifacts_table)
         logger.warning(
@@ -324,7 +322,7 @@ def run_download(  # pragma: no cover
 
     # Upload to UC Volume
     artifact_type = detect_artifact_type(artifact_url, content_type)
-    path = volume_path(volume_root, event_fingerprint, artifact_url)
+    path = volume_path(volume_root, event_id, artifact_url)
 
     from databricks.sdk import WorkspaceClient
 
@@ -334,7 +332,7 @@ def run_download(  # pragma: no cover
 
     artifact = make_artifact(
         artifact_url,
-        event_fingerprint,
+        event_id,
         artifact_type,
         path,
         ProcessingStatus.DOWNLOADED,
@@ -373,7 +371,7 @@ def main() -> None:  # pragma: no cover
     )
     parser.add_argument(
         "--artifacts-table",
-        default="artlake.bronze.artifacts",
+        default="artlake.bronze.raw_artifacts",
         help="Fully-qualified artifacts Delta table",
     )
     parser.add_argument(

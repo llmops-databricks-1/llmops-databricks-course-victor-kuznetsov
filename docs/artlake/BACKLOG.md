@@ -15,33 +15,28 @@
 | 1.7 | [#13](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/13) | Artifact downloader (PDFs & images → UC Volumes) |
 | 1.8 | [#14](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/14) | Geocoding + country filter |
 | 1.9 | [#15](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/15) | Clean events + language pattern generation (for_each) |
-
-### Up next — ingestion filter + workflow 🔜
-| Story | Issue | Description | Blocked by |
-|---|---|---|---|
-| 2.3 | [#17](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/17) | Rule-based event categorisation (ingestion filter, gates geocode) | #15 ✅ |
-| 2.4 | [#18](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/18) | LLM-based event categorisation (ingestion filter, gates download) | #17 |
-| 1.10 | [#21](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/21) | Ingestion workflow definition | #17, #18 |
+| 2.3 | [#17](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/17) | Rule-based event categorisation (ingestion filter, gates geocode) |
+| 2.4 | [#18](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/18) | LLM-based event categorisation (ingestion filter, gates download) |
+| 1.10 | [#21](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/21) | Ingestion workflow definition |
+| 2.2 | [#16](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/16) | Artifact processing (ai_parse_document + LLM summary) |
 
 ### Phase 2: Processing 🔜
 | Story | Issue | Description | Blocked by |
 |---|---|---|---|
-| 2.2 | [#16](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/16) | Artifact processing (ai_parse_document + LLM summary) | #13 ✅ |
-| 2.1 | [#22](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/22) | Content translation (events + artifact summaries) | #16, #18 |
+| — | [#38](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/38) | Validate processed_artifacts quality after model switch to Llama 3.3 70B | #16 ✅ |
+| 2.1 | [#22](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/22) | Content translation (events + artifact summaries) | #18 ✅, #16 ✅ |
 | 2.5 | [#19](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/19) | Vector embedding generation | #22 |
-| 2.6 | [#23](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/23) | Processing workflow definition | #16, #22, #19 |
+| 2.6 | [#23](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/23) | Processing workflow definition | #16 ✅, #22, #19 |
 | 2.7 | [#20](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/20) | Vector Search index setup | #19 |
-| 2.8 | [#24](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/24) | End-to-end integration test | #21, #23 |
+| 2.8 | [#24](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/24) | End-to-end integration test | #21 ✅, #23 |
 
 ### Recommended sequence
 ```
-Now:   #17 (categorise-rules) → #18 (categorise-llm) → #21 (ingestion workflow)
-
-       #16 (artifact proc) → #22 (translate: events + artifact summaries) → #19 (embed) → #23 (processing workflow)
-                                                                                                │
-                                                                                           #20 (vector search)
-                                                                                                │
-                                                                                           #24 (E2E test)
+Now:   #38 (validate Llama quality) → #22 (translate) → #19 (embed) → #23 (processing workflow)
+                                                                             │
+                                                                        #20 (vector search)
+                                                                             │
+                                                                        #24 (E2E test)
 ```
 
 ---
@@ -387,7 +382,7 @@ Two-mode entry point (`for_each_task` pattern, mirrors scrape and clean steps):
 
 ---
 
-### 🔜 1.10 — Ingestion workflow definition — [#21](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/21)
+### ✅ 1.10 — Ingestion workflow definition — [#21](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/21)
 
 **Workflow:** `resources/ingest_events_job.yml`
 
@@ -408,6 +403,22 @@ Two-mode entry point (`for_each_task` pattern, mirrors scrape and clean steps):
 ---
 
 ## Phase 2: Data Processing (Stories 2.1–2.8)
+
+### 🔜 QA — Validate processed_artifacts quality after model switch — [#38](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/38)
+
+**Depends on:** #16 ✅
+
+**Context:** Default LLM for artifact summarisation switched from `databricks-claude-sonnet-4` to `databricks-meta-llama-3-3-70b-instruct` to reduce cost (~$0.13 → ~$0.01–0.02 per run). Quality validation required before proceeding.
+
+**What to check:**
+- `deadline`, `requirements`, `location`, `fees` populated correctly for PDF and image artifacts
+- No increase in `processing_status = 'failed'` rows
+- JSON parsing reliable — no spurious nulls on populated documents
+- Multi-language documents (NL, DE, FR) handled correctly
+
+**Outcome:** If quality consistent → close issue and proceed to #22. If quality degrades → revert `_DEFAULT_MODEL` in `process_artifacts/extract.py` to `databricks-claude-sonnet-4`.
+
+---
 
 ### 🔜 2.1 — Content translation — [#22](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/22)
 
@@ -435,7 +446,7 @@ Two-mode entry point (`for_each_task` pattern, mirrors scrape and clean steps):
 
 ---
 
-### 🔜 2.2 — Artifact processing (`ai_parse_document` + LLM summary) — [#16](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/16)
+### ✅ 2.2 — Artifact processing (`ai_parse_document` + LLM summary) — [#16](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/16)
 
 **Module:** `process_artifacts/extract.py` → `artlake-process-artifacts`
 
@@ -458,7 +469,7 @@ Two-mode entry point (`for_each_task` pattern, mirrors scrape and clean steps):
 
 ---
 
-### 🔜 2.3 — Rule-based event categorisation — [#17](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/17)
+### ✅ 2.3 — Rule-based event categorisation — [#17](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/17)
 
 **Module:** `categorise/rules.py` → `artlake-categorise-rules`
 
@@ -481,7 +492,7 @@ Two-mode entry point (`for_each_task` pattern, mirrors scrape and clean steps):
 
 ---
 
-### 🔜 2.4 — LLM-based event categorisation — [#18](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/18)
+### ✅ 2.4 — LLM-based event categorisation — [#18](https://github.com/llmops-databricks-1/llmops-databricks-course-victor-kuznetsov/issues/18)
 
 **Module:** `categorise/llm.py` → `artlake-categorise-llm`
 
