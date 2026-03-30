@@ -89,18 +89,36 @@ class GoldEvent(BaseModel):
 
 
 class EventArtifact(BaseModel):
-    """Artifact metadata written to bronze.artifacts."""
+    """Artifact metadata written to bronze.raw_artifacts."""
 
     model_config = ConfigDict(strict=True)
 
-    fingerprint: str
-    event_fingerprint: str
+    id: str
+    event_id: str
     url: HttpUrl
     artifact_type: str
     content_hash: str | None = None
     file_path: str | None = None
     processing_status: ProcessingStatus = ProcessingStatus.NEW
     ingested_at: datetime = Field(default_factory=_now)
+
+
+class ProcessedArtifact(BaseModel):
+    """Extracted and summarised artifact written to bronze.processed_artifacts."""
+
+    model_config = ConfigDict(strict=True)
+
+    id: str
+    event_id: str
+    artifact_type: str
+    file_path: str
+    extracted_text: str | None = None
+    deadline: str | None = None
+    requirements: str | None = None
+    location: str | None = None
+    fees: str | None = None
+    processing_status: ProcessingStatus = ProcessingStatus.NEW
+    processed_at: datetime = Field(default_factory=_now)
 
 
 class SeenUrl(BaseModel):

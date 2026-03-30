@@ -241,17 +241,17 @@ class TestMakeArtifact:
         )
         assert isinstance(artifact, EventArtifact)
         assert str(artifact.url) == self._URL
-        assert artifact.event_fingerprint == self._FP
+        assert artifact.event_id == self._FP
         assert artifact.artifact_type == "image"
         assert artifact.file_path == "/Volumes/root/evfp123/poster.jpg"
         assert artifact.processing_status == ProcessingStatus.DOWNLOADED
         assert artifact.content_hash == "abc123hash"
 
-    def test_fingerprint_matches_url_fingerprint(self) -> None:
+    def test_id_matches_url_fingerprint(self) -> None:
         artifact = make_artifact(
             self._URL, self._FP, "image", None, ProcessingStatus.FAILED
         )
-        assert artifact.fingerprint == url_fingerprint(self._URL)
+        assert artifact.id == url_fingerprint(self._URL)
 
     def test_failed_artifact_has_no_file_path(self) -> None:
         artifact = make_artifact(

@@ -183,8 +183,8 @@ class TestGoldEvent:
 class TestEventArtifact:
     def test_valid_minimal(self) -> None:
         artifact = EventArtifact(
-            fingerprint="abc123",
-            event_fingerprint="evfp456",
+            id="abc123",
+            event_id="evfp456",
             url="https://example.com/file.pdf",
             artifact_type="pdf",
         )
@@ -194,8 +194,8 @@ class TestEventArtifact:
 
     def test_valid_full(self) -> None:
         artifact = EventArtifact(
-            fingerprint="abc123",
-            event_fingerprint="evfp456",
+            id="abc123",
+            event_id="evfp456",
             url="https://example.com/poster.jpg",
             artifact_type="image",
             content_hash="deadbeef" * 8,
@@ -208,8 +208,8 @@ class TestEventArtifact:
     def test_invalid_processing_status(self) -> None:
         with pytest.raises(ValidationError):
             EventArtifact(
-                fingerprint="abc123",
-                event_fingerprint="evfp456",
+                id="abc123",
+                event_id="evfp456",
                 url="https://example.com/file.pdf",
                 artifact_type="pdf",
                 processing_status="unknown",

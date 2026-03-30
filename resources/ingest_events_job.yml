@@ -259,7 +259,7 @@ resources:
               - "--raw-events-table"
               - "artlake.bronze.categorised_events"
               - "--artifacts-table"
-              - "artlake.bronze.artifacts"
+              - "artlake.bronze.raw_artifacts"
               - "--env"
               - "${bundle.target}"
 
@@ -284,8 +284,50 @@ resources:
                   - "--raw-events-table"
                   - "artlake.bronze.categorised_events"
                   - "--artifacts-table"
-                  - "artlake.bronze.artifacts"
+                  - "artlake.bronze.raw_artifacts"
                   - "--volume-root"
                   - "/Volumes/artlake/volumes/raw_artifacts"
+                  - "--env"
+                  - "${bundle.target}"
+
+        - task_key: list_artifacts_to_process
+          depends_on:
+            - task_key: download_artifacts
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-process-artifacts
+            package_name: artlake
+            parameters:
+              - "--mode"
+              - "list"
+              - "--raw-artifacts-table"
+              - "artlake.bronze.raw_artifacts"
+              - "--processed-artifacts-table"
+              - "artlake.bronze.processed_artifacts"
+              - "--env"
+              - "${bundle.target}"
+
+        - task_key: process_artifacts
+          depends_on:
+            - task_key: list_artifacts_to_process
+          for_each_task:
+            inputs: "{{tasks.list_artifacts_to_process.values.id}}"
+            concurrency: 5
+            task:
+              task_key: process_artifact_iteration
+              max_retries: 1
+              environment_key: default
+              python_wheel_task:
+                entry_point: artlake-process-artifacts
+                package_name: artlake
+                parameters:
+                  - "--mode"
+                  - "extract"
+                  - "--id"
+                  - "{{input}}"
+                  - "--raw-artifacts-table"
+                  - "artlake.bronze.raw_artifacts"
+                  - "--processed-artifacts-table"
+                  - "artlake.bronze.processed_artifacts"
                   - "--env"
                   - "${bundle.target}"
