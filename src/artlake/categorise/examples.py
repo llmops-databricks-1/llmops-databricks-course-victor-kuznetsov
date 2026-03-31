@@ -214,7 +214,7 @@ def generate_examples(
         lang_kws = category_keywords.get(category, {})
         for language in _LANGUAGES:
             # Fall back to English keywords if language-specific ones are absent
-            keywords = lang_kws.get(language, lang_kws.get("en", []))
+            keywords = lang_kws.get(language, lang_kws.get("EN", []))
             logger.info("  language: {}", language)
             result = _call_llm(
                 client, model, category, language, keywords, n=n_per_language

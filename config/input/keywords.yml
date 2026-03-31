@@ -1,7 +1,9 @@
+target_language: EN
+
 keywords:
   - open call artists
 
 countries:
   - code: NL
     name: Netherlands
-    languages: [nl]
+    languages: [NL]
