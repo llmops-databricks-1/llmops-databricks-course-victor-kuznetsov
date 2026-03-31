@@ -121,6 +121,75 @@ class ProcessedArtifact(BaseModel):
     processed_at: datetime = Field(default_factory=_now)
 
 
+class SilverEvent(BaseModel):
+    """Translated event written to silver.events."""
+
+    model_config = ConfigDict(strict=True)
+
+    fingerprint: str
+    url: HttpUrl
+    source: str
+    category: str
+
+    # Original text (source language)
+    title_original: str
+    description_original: str
+    location_text_original: str
+
+    # Translated text (target language)
+    title: str
+    description: str
+    location_text: str
+
+    # Date & geo
+    date_start: datetime | None = None
+    date_end: datetime | None = None
+    lat: float | None = None
+    lng: float | None = None
+    country: str | None = None
+    query_country: str | None = None
+    domain_country: str | None = None
+
+    # Language
+    language: str
+    target_language: str
+
+    # Artifact metadata
+    artifact_urls: list[str] = []
+    artifact_paths: list[str] = []
+
+    # Timestamps & status
+    ingested_at: datetime
+    translated_at: datetime = Field(default_factory=_now)
+    processing_status: ProcessingStatus = ProcessingStatus.DONE
+
+
+class SilverArtifact(BaseModel):
+    """Translated artifact written to silver.processed_artifacts."""
+
+    model_config = ConfigDict(strict=True)
+
+    id: str
+    event_id: str
+    artifact_type: str
+    file_path: str
+
+    # Original text (source language)
+    extracted_text_original: str | None = None
+
+    # Translated text (target language)
+    extracted_text: str | None = None
+    deadline: str | None = None
+    requirements: str | None = None
+    location: str | None = None
+    fees: str | None = None
+
+    target_language: str
+    processing_status: ProcessingStatus = ProcessingStatus.DONE
+    processed_at: datetime
+    translated_at: datetime = Field(default_factory=_now)
+
+
 class SeenUrl(BaseModel):
     """Dedup tracker written to staging.seen_urls."""
 

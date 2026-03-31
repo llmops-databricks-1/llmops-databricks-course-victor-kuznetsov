@@ -37,7 +37,7 @@ Generate a query for each of these:
 
 Respond with ONLY a JSON array, no other text:
 [
-  {{"country_code": "XX", "language": "xx", "query": "translated query"}}
+  {{"country_code": "XX", "language": "XX", "query": "translated query"}}
 ]"""
 
 

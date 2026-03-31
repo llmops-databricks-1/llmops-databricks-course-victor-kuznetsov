@@ -10,6 +10,6 @@ class ArtLakeConfig(BaseModel):
 
     target_countries: list[str]
     languages: list[str]
-    target_language: str = "en"
+    target_language: str = "EN"
     categories: list[str]
     scrape_schedule: str

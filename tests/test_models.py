@@ -260,21 +260,21 @@ class TestArtLakeConfig:
     def test_valid(self) -> None:
         config = ArtLakeConfig(
             target_countries=["NL", "BE", "DE", "FR"],
-            languages=["en", "nl", "de", "fr"],
+            languages=["EN", "NL", "DE", "FR"],
             categories=["open_call", "market", "exhibition", "workshop"],
             scrape_schedule="0 6 * * *",
         )
-        assert config.target_language == "en"
+        assert config.target_language == "EN"
 
     def test_custom_target_language(self) -> None:
         config = ArtLakeConfig(
             target_countries=["NL"],
-            languages=["nl"],
-            target_language="nl",
+            languages=["NL"],
+            target_language="NL",
             categories=["open_call"],
             scrape_schedule="0 6 * * *",
         )
-        assert config.target_language == "nl"
+        assert config.target_language == "NL"
 
     def test_missing_required(self) -> None:
         with pytest.raises(ValidationError):

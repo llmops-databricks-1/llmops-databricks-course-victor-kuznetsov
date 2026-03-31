@@ -43,6 +43,7 @@ artlake-categorise-rules = "artlake.categorise.rules:main"
 artlake-generate-category-examples = "artlake.categorise.examples:main"
 artlake-categorise-llm = "artlake.categorise.llm:main"
 artlake-process-artifacts = "artlake.process_artifacts.extract:main"
+artlake-translate = "artlake.translate.content:main"
 
 [project.optional-dependencies]
 dev = ["databricks-connect>=17.0, <18",

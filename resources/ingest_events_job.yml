@@ -331,3 +331,55 @@ resources:
                   - "artlake.bronze.processed_artifacts"
                   - "--env"
                   - "${bundle.target}"
+
+        - task_key: list_events_to_translate
+          depends_on:
+            - task_key: process_artifacts
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-translate
+            package_name: artlake
+            parameters:
+              - "--mode"
+              - "list"
+              - "--keywords"
+              - "${var.config_root}/config/input/keywords.yml"
+              - "--raw-events-table"
+              - "artlake.bronze.categorised_events"
+              - "--silver-events-table"
+              - "artlake.silver.events"
+              - "--env"
+              - "${bundle.target}"
+
+        - task_key: translate_events
+          depends_on:
+            - task_key: list_events_to_translate
+          for_each_task:
+            inputs: "{{tasks.list_events_to_translate.values.fingerprints}}"
+            concurrency: 5
+            task:
+              task_key: translate_event_iteration
+              max_retries: 1
+              environment_key: default
+              python_wheel_task:
+                entry_point: artlake-translate
+                package_name: artlake
+                parameters:
+                  - "--mode"
+                  - "translate"
+                  - "--fingerprint"
+                  - "{{input}}"
+                  - "--keywords"
+                  - "${var.config_root}/config/input/keywords.yml"
+                  - "--raw-events-table"
+                  - "artlake.bronze.raw_events"
+                  - "--processed-artifacts-table"
+                  - "artlake.bronze.processed_artifacts"
+                  - "--silver-events-table"
+                  - "artlake.silver.events"
+                  - "--silver-artifacts-table"
+                  - "artlake.silver.processed_artifacts"
+                  - "--model"
+                  - "databricks-meta-llama-3-3-70b-instruct"
+                  - "--env"
+                  - "${bundle.target}"

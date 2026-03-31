@@ -7,7 +7,7 @@
 # Languages: EN, NL, DE, FR (matching the search query languages).
 category_keywords:
   open_call:
-    en:
+    EN:
       - open call
       - call for artists
       - call for submissions
@@ -16,25 +16,25 @@ category_keywords:
       - submission deadline
       - applications open
       - deadline to apply
-    nl:
+    NL:
       - open oproep
       - oproep voor kunstenaars
       - inschrijvingsdeadline
       - deadline inschrijving
       - aanmelden voor
-    de:
+    DE:
       - offener aufruf
       - bewerbungsschluss
       - einreichungsfrist
       - jetzt bewerben
-    fr:
+    FR:
       - appel à candidatures
       - appel ouvert
       - appel à artistes
       - date limite de candidature
 
   exhibition:
-    en:
+    EN:
       - exhibition
       - vernissage
       - opening reception
@@ -43,67 +43,67 @@ category_keywords:
       - solo show
       - gallery opening
       - on view until
-    nl:
+    NL:
       - tentoonstelling
       - expositie
       - vernissage
       - galerie-opening
-    de:
+    DE:
       - ausstellung
       - vernissage
       - galerie-eröffnung
       - kunstausstellung
-    fr:
+    FR:
       - exposition
       - vernissage
       - inauguration de
 
   workshop:
-    en:
+    EN:
       - workshop
       - masterclass
       - art class
       - art residency
       - artist residency
       - art course
-    nl:
+    NL:
       - workshop
       - masterclass
       - kunstles
       - residentie
-    de:
+    DE:
       - workshop
       - masterclass
       - kunstkurs
       - künstlerresidenz
-    fr:
+    FR:
       - atelier
       - masterclass
       - cours d'art
       - résidence artistique
 
   market:
-    en:
+    EN:
       - art market
       - art fair
       - craft fair
       - craft market
       - artisan market
-    nl:
+    NL:
       - kunstmarkt
       - kunstbeurs
       - ambachtsmarkt
-    de:
+    DE:
       - kunstmarkt
       - kunstmesse
       - kunstbörse
-    fr:
+    FR:
       - marché d'art
       - marché artisanal
       - foire d'art
 
   non_art:
-    en:
+    EN:
       - football match
       - soccer game
       - basketball game
@@ -112,15 +112,15 @@ category_keywords:
       - insurance quote
       - cryptocurrency
       - forex trading
-    nl:
+    NL:
       - voetbalwedstrijd
       - kookrecept
       - hypotheekadvies
-    de:
+    DE:
       - fußballspiel
       - kochrezept
       - versicherungsangebot
-    fr:
+    FR:
       - match de football
       - recette de cuisine
       - devis assurance
