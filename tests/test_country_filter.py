@@ -5,21 +5,21 @@ from __future__ import annotations
 import pytest
 from pydantic import HttpUrl
 
-from artlake.filter.country import (
+from artlake.events.geocode import (
     apply_geocoding,
     geocode_location,
     llm_extract_address,
     llm_resolve_country,
 )
-from artlake.models.event import CleanEvent, ProcessingStatus
+from artlake.models.event import EventDate, LocationStatus
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_event(fingerprint: str, location_text: str) -> CleanEvent:
-    return CleanEvent(
+def _make_event(fingerprint: str, location_text: str) -> EventDate:
+    return EventDate(
         fingerprint=fingerprint,
         title="Test Event",
         description="A test art event",
@@ -326,35 +326,35 @@ class TestLLMResolveCountry:
 
 
 class TestApplyGeocoding:
-    def test_accepted_event_gets_done_status(self) -> None:
+    def test_accepted_event_gets_identified_status(self) -> None:
         event = _make_event("fp1", "Amsterdam")
 
         result = apply_geocoding(
             [event], ["NL", "BE"], lambda _: MockLocation(52.37, 4.89, "nl")
         )
 
-        assert result[0].processing_status == ProcessingStatus.DONE
+        assert result[0].location_status == LocationStatus.IDENTIFIED
         assert result[0].country == "NL"
         assert result[0].lat == pytest.approx(52.37)
         assert result[0].lng == pytest.approx(4.89)
 
-    def test_out_of_target_country_gets_failed_status(self) -> None:
+    def test_out_of_target_country_gets_requires_validation(self) -> None:
         event = _make_event("fp1", "London")
 
         result = apply_geocoding(
             [event], ["NL", "BE"], lambda _: MockLocation(51.50, -0.12, "gb")
         )
 
-        assert result[0].processing_status == ProcessingStatus.FAILED
+        assert result[0].location_status == LocationStatus.REQUIRES_VALIDATION
         assert result[0].country == "GB"
 
-    def test_unresolvable_location_gets_failed_with_unknown_country(self) -> None:
+    def test_unresolvable_location_gets_missing_status(self) -> None:
         event = _make_event("fp1", "unknown place xyz")
 
         result = apply_geocoding([event], ["NL"], lambda _: None)
 
-        assert result[0].processing_status == ProcessingStatus.FAILED
-        assert result[0].country == "unknown"
+        assert result[0].location_status == LocationStatus.MISSING
+        assert result[0].country is None
         assert result[0].lat is None
         assert result[0].lng is None
 
@@ -384,14 +384,14 @@ class TestApplyGeocoding:
             [event], ["nl"], lambda _: MockLocation(52.37, 4.89, "NL")
         )
 
-        assert result[0].processing_status == ProcessingStatus.DONE
+        assert result[0].location_status == LocationStatus.IDENTIFIED
 
     def test_mixed_countries_filtered_correctly(self) -> None:
         events = [
-            _make_event("fp1", "Amsterdam"),  # NL → done
-            _make_event("fp2", "Brussels"),  # BE → done
-            _make_event("fp3", "London"),  # GB → failed
-            _make_event("fp4", "nowhere"),  # unresolvable → failed
+            _make_event("fp1", "Amsterdam"),  # NL → identified
+            _make_event("fp2", "Brussels"),  # BE → identified
+            _make_event("fp3", "London"),  # GB → requires_validation
+            _make_event("fp4", "nowhere"),  # unresolvable → missing
         ]
 
         location_map: dict[str, MockLocation | None] = {
@@ -405,20 +405,13 @@ class TestApplyGeocoding:
             events, ["NL", "BE"], lambda text: location_map.get(text)
         )
 
-        statuses = [e.processing_status for e in result]
+        statuses = [e.location_status for e in result]
         assert statuses == [
-            ProcessingStatus.DONE,
-            ProcessingStatus.DONE,
-            ProcessingStatus.FAILED,
-            ProcessingStatus.FAILED,
+            LocationStatus.IDENTIFIED,
+            LocationStatus.IDENTIFIED,
+            LocationStatus.REQUIRES_VALIDATION,
+            LocationStatus.MISSING,
         ]
-
-    def test_unresolvable_country_set_to_unknown_string(self) -> None:
-        event = _make_event("fp1", "mystery location")
-
-        result = apply_geocoding([event], ["NL"], lambda _: None)
-
-        assert result[0].country == "unknown"
 
     def test_output_length_matches_input(self) -> None:
         events = [_make_event(f"fp{i}", f"Location {i}") for i in range(5)]
@@ -426,36 +419,6 @@ class TestApplyGeocoding:
         result = apply_geocoding(events, ["NL"], lambda _: None)
 
         assert len(result) == 5
-
-    def test_original_events_not_mutated(self) -> None:
-        event = _make_event("fp1", "Amsterdam")
-        original_status = event.processing_status
-
-        apply_geocoding([event], ["NL"], lambda _: MockLocation(52.37, 4.89, "nl"))
-
-        assert event.processing_status == original_status
-
-    def test_query_country_and_domain_country_preserved(self) -> None:
-        """Geocoding must not overwrite query_country or domain_country."""
-        event = CleanEvent(
-            fingerprint="fp1",
-            title="Event",
-            description="Desc",
-            location_text="Amsterdam",
-            language="nl",
-            source="test.com",
-            url=HttpUrl("https://gallery.nl/event"),
-            query_country="NL",
-            domain_country="NL",
-        )
-
-        result = apply_geocoding(
-            [event], ["NL"], lambda _: MockLocation(52.37, 4.89, "nl")
-        )
-
-        assert result[0].query_country == "NL"
-        assert result[0].domain_country == "NL"
-        assert result[0].country == "NL"
 
     def test_llm_address_resolves_with_coordinates(self) -> None:
         """Stage 2: LLM normalises address → Nominatim succeeds → lat/lng set."""
@@ -472,7 +435,7 @@ class TestApplyGeocoding:
             llm_address_fn=lambda _: "Feldafing, Bavaria, Germany",
         )
 
-        assert result[0].processing_status == ProcessingStatus.DONE
+        assert result[0].location_status == LocationStatus.IDENTIFIED
         assert result[0].country == "DE"
         assert result[0].lat == pytest.approx(47.96)
         assert result[0].lng == pytest.approx(11.29)
@@ -507,7 +470,7 @@ class TestApplyGeocoding:
             llm_country_fn=lambda _: "BE",
         )
 
-        assert result[0].processing_status == ProcessingStatus.DONE
+        assert result[0].location_status == LocationStatus.IDENTIFIED
         assert result[0].country == "BE"
         assert result[0].lat is None
         assert result[0].lng is None
@@ -526,7 +489,7 @@ class TestApplyGeocoding:
             llm_address_fn=lambda _: "Luxembourg City, Luxembourg",
         )
 
-        assert result[0].processing_status == ProcessingStatus.FAILED
+        assert result[0].location_status == LocationStatus.REQUIRES_VALIDATION
         assert result[0].country == "LU"
 
     def test_llm_address_cache_deduplicates(self) -> None:
@@ -556,7 +519,7 @@ class TestApplyGeocoding:
             [event], ["BE"], lambda _: None, llm_country_fn=lambda _: "BE"
         )
 
-        assert result[0].processing_status == ProcessingStatus.DONE
+        assert result[0].location_status == LocationStatus.IDENTIFIED
         assert result[0].country == "BE"
         assert result[0].lat is None
         assert result[0].lng is None
@@ -579,33 +542,33 @@ class TestApplyGeocoding:
 
         assert llm_call_count == 0
 
-    def test_llm_fallback_out_of_target_gets_failed(self) -> None:
+    def test_llm_fallback_out_of_target_gets_requires_validation(self) -> None:
         event = _make_event("fp1", "Luxembourg")
 
         result = apply_geocoding(
             [event], ["NL", "BE"], lambda _: None, llm_country_fn=lambda _: "LU"
         )
 
-        assert result[0].processing_status == ProcessingStatus.FAILED
+        assert result[0].location_status == LocationStatus.REQUIRES_VALIDATION
         assert result[0].country == "LU"
 
-    def test_llm_fallback_returns_none_gets_unknown(self) -> None:
+    def test_llm_fallback_returns_unknown_gets_missing(self) -> None:
         event = _make_event("fp1", "gibberish form text xyz")
 
         result = apply_geocoding(
             [event], ["NL"], lambda _: None, llm_country_fn=lambda _: "UNKNOWN"
         )
 
-        assert result[0].processing_status == ProcessingStatus.FAILED
-        assert result[0].country == "unknown"
+        assert result[0].location_status == LocationStatus.MISSING
+        assert result[0].country is None
 
     def test_no_llm_fn_still_fails_on_unresolvable(self) -> None:
         event = _make_event("fp1", "mystery location")
 
         result = apply_geocoding([event], ["NL"], lambda _: None)
 
-        assert result[0].processing_status == ProcessingStatus.FAILED
-        assert result[0].country == "unknown"
+        assert result[0].location_status == LocationStatus.MISSING
+        assert result[0].country is None
 
     def test_llm_country_cache_deduplicates_identical_location_text(self) -> None:
         llm_call_count = 0
@@ -634,10 +597,11 @@ class TestApplyGeocoding:
 @pytest.mark.integration
 class TestGeocodeIntegration:
     def test_run_geocode(self) -> None:
-        from artlake.filter.country import run_geocode
+        from artlake.events.geocode import run_geocode
 
         run_geocode(
-            raw_events_table="artlake.bronze.raw_events",
+            event_dates_table="artlake.bronze.event_dates",
+            event_location_table="artlake.bronze.event_location",
             target_countries=["NL", "BE", "DE", "FR"],
             env="dev",
         )

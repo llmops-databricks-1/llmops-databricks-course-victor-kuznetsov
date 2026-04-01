@@ -1,5 +1,7 @@
 """Pipeline configuration model."""
 
+from datetime import date
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -13,3 +15,4 @@ class ArtLakeConfig(BaseModel):
     target_language: str = "EN"
     categories: list[str]
     scrape_schedule: str
+    cutoff_date: date | None = None

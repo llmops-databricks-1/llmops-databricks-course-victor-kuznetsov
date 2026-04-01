@@ -9,7 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import HttpUrl
 
-from artlake.clean.events import (
+from artlake.events.extract_dates import (
+    LanguagePatterns,
     _clean_title,
     _country_from_url,
     _fields_complete,
@@ -18,14 +19,14 @@ from artlake.clean.events import (
     _normalize_text,
     _parse_llm_date,
     _source_from_url,
-    clean_page,
+    build_field_re,
+    extract_dates,
     extract_fields_llm,
     extract_fields_rule_based,
-    is_outdated,
+    get_event_status,
     parse_dates,
 )
-from artlake.clean.patterns import LanguagePatterns, build_field_re
-from artlake.models.event import ProcessingStatus, ScrapedPage
+from artlake.models.event import EventStatus, ProcessingStatus, ScrapedPage
 
 _TEST_PATTERNS = LanguagePatterns(
     generated_at="2026-01-01T00:00:00+00:00",
@@ -135,30 +136,37 @@ class TestParseDates:
         assert start is None
         assert end is None
 
+    def test_uppercase_language_codes(self) -> None:
+        """Uppercase language codes from language_patterns must not raise."""
+        text = "Event on 2099-08-01."
+        start, _ = parse_dates(text, languages=["NL", "FR", "DE"])
+        assert start is not None
+        assert start.year == 2099
+
 
 # ---------------------------------------------------------------------------
-# is_outdated
+# get_event_status
 # ---------------------------------------------------------------------------
 
 
-class TestIsOutdated:
-    def test_past_end_date(self) -> None:
-        assert is_outdated(_past(10), None) is True
+class TestGetEventStatus:
+    def test_past_end_date_returns_finished(self) -> None:
+        assert get_event_status(_past(10), None) == EventStatus.FINISHED
 
-    def test_past_end_date_with_range(self) -> None:
-        assert is_outdated(_past(20), _past(5)) is True
+    def test_past_range_returns_finished(self) -> None:
+        assert get_event_status(_past(20), _past(5)) == EventStatus.FINISHED
 
-    def test_future_end_date(self) -> None:
-        assert is_outdated(_past(5), _future(10)) is False
+    def test_future_end_date_returns_future(self) -> None:
+        assert get_event_status(_past(5), _future(10)) == EventStatus.FUTURE
 
-    def test_future_start_no_end(self) -> None:
-        assert is_outdated(_future(5), None) is False
+    def test_future_start_no_end_returns_future(self) -> None:
+        assert get_event_status(_future(5), None) == EventStatus.FUTURE
 
-    def test_past_start_no_end(self) -> None:
-        assert is_outdated(_past(5), None) is True
+    def test_past_start_no_end_returns_finished(self) -> None:
+        assert get_event_status(_past(5), None) == EventStatus.FINISHED
 
-    def test_no_dates(self) -> None:
-        assert is_outdated(None, None) is False
+    def test_no_dates_returns_undefined(self) -> None:
+        assert get_event_status(None, None) == EventStatus.UNDEFINED
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +411,7 @@ class TestHelpers:
 
 
 # ---------------------------------------------------------------------------
-# clean_page — integration of the full funnel
+# extract_dates — integration of the full funnel
 # ---------------------------------------------------------------------------
 
 
@@ -415,26 +423,23 @@ class TestCleanPage:
         client.chat.completions.create.return_value.choices = [MagicMock(message=msg)]
         return client
 
-    def test_outdated_event_returns_outdated_status(self) -> None:
-        # Past date in text → funnel exits early with outdated
+    def test_past_event_returns_finished_status(self) -> None:
         past_date = (_past(10)).strftime("%Y-%m-%d")
         page = _page(
             title="Old Show",
             raw_text=f"Event on {past_date}. Location: Amsterdam.",
         )
         client = MagicMock()
-        event = clean_page(page, "en", client, "test-model", _TEST_PATTERNS)
-        assert event.processing_status == ProcessingStatus.OUTDATED
-        client.chat.completions.create.assert_not_called()
+        event = extract_dates(page, "en", client, "test-model", _TEST_PATTERNS)
+        assert event.event_status == EventStatus.FINISHED
 
-    def test_complete_fields_returns_new_status(self) -> None:
+    def test_complete_fields_extracted(self) -> None:
         page = _page(
             title="Summer Open Call",
             raw_text="Great exhibition. Location: Brussels, Belgium. Apply by 2099-08-01.",  # noqa: E501
         )
         client = MagicMock()
-        event = clean_page(page, "en", client, "test-model", _TEST_PATTERNS)
-        assert event.processing_status == ProcessingStatus.NEW
+        event = extract_dates(page, "en", client, "test-model", _TEST_PATTERNS)
         assert event.title == "Summer Open Call"
         assert event.location_text == "Brussels, Belgium"
 
@@ -446,23 +451,25 @@ class TestCleanPage:
         )
         client = self._client_with(payload)
 
-        event = clean_page(page, "nl", client, "test-model", _TEST_PATTERNS)
+        event = extract_dates(page, "nl", client, "test-model", _TEST_PATTERNS)
 
         client.chat.completions.create.assert_called_once()
         assert event.location_text == "Rotterdam"
-        assert event.processing_status == ProcessingStatus.NEW
+        assert event.event_status == EventStatus.UNDEFINED
 
-    def test_requires_manual_validation_when_llm_also_fails(self) -> None:
+    def test_returns_event_date_when_llm_fails(self) -> None:
         page = _page(title="Show", raw_text="Some vague text.")
         client = MagicMock()
         client.chat.completions.create.side_effect = Exception("LLM down")
 
-        event = clean_page(page, "en", client, "test-model", _TEST_PATTERNS)
+        from artlake.models.event import EventDate
 
-        assert event.processing_status == ProcessingStatus.REQUIRES_MANUAL_VALIDATION
+        event = extract_dates(page, "en", client, "test-model", _TEST_PATTERNS)
 
-    def test_llm_date_triggers_outdated_recheck(self) -> None:
-        # No dates in text (rule-based finds nothing), LLM returns past date
+        assert isinstance(event, EventDate)
+        assert event.event_status == EventStatus.UNDEFINED
+
+    def test_llm_date_sets_finished_status(self) -> None:
         past_date = _past(5).strftime("%Y-%m-%d")
         page = _page(
             title="Old", raw_text="Some vague text without clear dates no location."
@@ -473,9 +480,9 @@ class TestCleanPage:
         )
         client = self._client_with(payload)
 
-        event = clean_page(page, "de", client, "test-model", _TEST_PATTERNS)
+        event = extract_dates(page, "de", client, "test-model", _TEST_PATTERNS)
 
-        assert event.processing_status == ProcessingStatus.OUTDATED
+        assert event.event_status == EventStatus.FINISHED
 
     def test_copies_artifact_urls(self) -> None:
         page = _page(
@@ -484,10 +491,10 @@ class TestCleanPage:
             artifact_urls=["https://example.com/poster.pdf"],
         )
         client = MagicMock()
-        event = clean_page(page, "en", client, "test-model", _TEST_PATTERNS)
+        event = extract_dates(page, "en", client, "test-model", _TEST_PATTERNS)
         assert "https://example.com/poster.pdf" in event.artifact_urls
 
-    def test_no_date_event_is_not_outdated(self) -> None:
+    def test_no_date_event_has_undefined_status(self) -> None:
         page = _page(
             title="Ongoing Show",
             raw_text="An ongoing exhibition. Location: Paris.",
@@ -503,8 +510,8 @@ class TestCleanPage:
                 )
             )
         ]
-        event = clean_page(page, "fr", client, "test-model", _TEST_PATTERNS)
-        assert event.processing_status != ProcessingStatus.OUTDATED
+        event = extract_dates(page, "fr", client, "test-model", _TEST_PATTERNS)
+        assert event.event_status == EventStatus.UNDEFINED
 
 
 # ---------------------------------------------------------------------------
@@ -515,15 +522,14 @@ class TestCleanPage:
 @pytest.mark.integration
 class TestCleanEventsIntegration:
     def test_delta_write(self) -> None:
-        """Write a single CleanEvent to bronze.raw_events and verify row count."""
-        from artlake.clean.events import run_clean
+        """Write EventDate records to bronze.event_dates."""
+        from artlake.events.extract_dates import run_extract_dates
 
         # Integration test: validates schema compatibility and Delta write
         # Requires a Databricks workspace with artlake catalog.
-        run_clean(
+        run_extract_dates(
             scraped_pages_table="artlake.staging.scraped_pages",
             search_results_table="artlake.staging.search_results",
-            raw_events_table="artlake.bronze.raw_events",
+            event_dates_table="artlake.bronze.event_dates",
             patterns_path=Path("config/output/language_patterns.yml"),
-            model="databricks-meta-llama-3-3-70b-instruct",
         )

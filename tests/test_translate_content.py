@@ -8,13 +8,13 @@ from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
-from artlake.translate.content import (
+from artlake.events.translate import (
     _translate_text,
     build_system_prompt,
     build_translation_payload,
     load_target_language,
-    make_silver_artifact,
-    make_silver_event,
+    make_event_artifacts_details_translated,
+    make_event_details_translated,
     parse_translation_response,
 )
 
@@ -216,11 +216,11 @@ class TestParseTranslationResponse:
 
 
 # ---------------------------------------------------------------------------
-# make_silver_event
+# make_event_details_translated
 # ---------------------------------------------------------------------------
 
 
-class TestMakeSilverEvent:
+class TestMakeEventDetailsTranslated:
     def _base_kwargs(self) -> dict:
         return {
             "fingerprint": "fp123",
@@ -240,7 +240,6 @@ class TestMakeSilverEvent:
             "language": "nl",
             "target_language": "en",
             "artifact_urls": ["https://example.com/call.pdf"],
-            "artifact_paths": ["/Volumes/artlake/volumes/raw_artifacts/fp123/call.pdf"],
             "ingested_at": _NOW,
             "translated_title": "Exhibition",
             "translated_description": "Description",
@@ -248,12 +247,12 @@ class TestMakeSilverEvent:
         }
 
     def test_translated_fields_applied(self) -> None:
-        event = make_silver_event(**self._base_kwargs())
+        event = make_event_details_translated(**self._base_kwargs())
         assert event.title == "Exhibition"
         assert event.description == "Description"
 
     def test_original_fields_preserved(self) -> None:
-        event = make_silver_event(**self._base_kwargs())
+        event = make_event_details_translated(**self._base_kwargs())
         assert event.title_original == "Tentoonstelling"
         assert event.description_original == "Beschrijving"
 
@@ -262,40 +261,40 @@ class TestMakeSilverEvent:
         kwargs["translated_title"] = None
         kwargs["translated_description"] = None
         kwargs["translated_location_text"] = None
-        event = make_silver_event(**kwargs)
+        event = make_event_details_translated(**kwargs)
         assert event.title == "Tentoonstelling"
         assert event.description == "Beschrijving"
         assert event.location_text == "Amsterdam"
 
     def test_language_fields_set(self) -> None:
-        event = make_silver_event(**self._base_kwargs())
+        event = make_event_details_translated(**self._base_kwargs())
         assert event.language == "nl"
         assert event.target_language == "en"
 
     def test_fingerprint_and_category(self) -> None:
-        event = make_silver_event(**self._base_kwargs())
+        event = make_event_details_translated(**self._base_kwargs())
         assert event.fingerprint == "fp123"
         assert event.category == "open_call"
 
     def test_geo_fields_preserved(self) -> None:
-        event = make_silver_event(**self._base_kwargs())
+        event = make_event_details_translated(**self._base_kwargs())
         assert event.lat == pytest.approx(52.37)
         assert event.lng == pytest.approx(4.9)
         assert event.country == "NL"
 
 
 # ---------------------------------------------------------------------------
-# make_silver_artifact
+# make_event_artifacts_details_translated
 # ---------------------------------------------------------------------------
 
 
-class TestMakeSilverArtifact:
+class TestMakeEventArtifactsTranslated:
     def _base_kwargs(self) -> dict:
         return {
             "artifact_id": "art001",
             "event_id": "fp123",
             "artifact_type": "pdf",
-            "file_path": "/Volumes/artlake/volumes/raw_artifacts/fp123/call.pdf",
+            "file_path": "/Volumes/artlake/volumes/event_artifacts/fp123/call.pdf",
             "extracted_text_original": "Oproep voor kunstenaars.",
             "processed_at": _NOW,
             "target_language": "en",
@@ -307,19 +306,19 @@ class TestMakeSilverArtifact:
         }
 
     def test_translated_fields_applied(self) -> None:
-        artifact = make_silver_artifact(**self._base_kwargs())
+        artifact = make_event_artifacts_details_translated(**self._base_kwargs())
         assert artifact.extracted_text == "Call for artists."
         assert artifact.deadline == "15 April 2026"
         assert artifact.fees == "No costs"
 
     def test_original_preserved(self) -> None:
-        artifact = make_silver_artifact(**self._base_kwargs())
+        artifact = make_event_artifacts_details_translated(**self._base_kwargs())
         assert artifact.extracted_text_original == "Oproep voor kunstenaars."
 
     def test_fallback_to_original_when_translation_null(self) -> None:
         kwargs = self._base_kwargs()
         kwargs["translated_extracted_text"] = None
-        artifact = make_silver_artifact(**kwargs)
+        artifact = make_event_artifacts_details_translated(**kwargs)
         assert artifact.extracted_text == "Oproep voor kunstenaars."
 
     def test_all_none_translated_fields(self) -> None:
@@ -331,14 +330,14 @@ class TestMakeSilverArtifact:
             translated_location=None,
             translated_fees=None,
         )
-        artifact = make_silver_artifact(**kwargs)
+        artifact = make_event_artifacts_details_translated(**kwargs)
         assert artifact.deadline is None
         assert artifact.requirements is None
         assert artifact.location is None
         assert artifact.fees is None
 
     def test_identity_fields(self) -> None:
-        artifact = make_silver_artifact(**self._base_kwargs())
+        artifact = make_event_artifacts_details_translated(**self._base_kwargs())
         assert artifact.id == "art001"
         assert artifact.event_id == "fp123"
         assert artifact.artifact_type == "pdf"

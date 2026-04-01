@@ -136,9 +136,12 @@ def generate_queries(
         for item in results:
             # Find the country name from the triples
             country_name = next(
-                name
-                for code, name, lang in triples
-                if code == item["country_code"] and lang == item["language"]
+                (
+                    name
+                    for code, name, lang in triples
+                    if code == item["country_code"] and lang == item["language"]
+                ),
+                item["country_code"],
             )
             all_queries.append(
                 SearchQuery(

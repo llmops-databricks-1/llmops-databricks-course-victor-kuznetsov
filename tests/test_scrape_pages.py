@@ -8,8 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from artlake.models.event import ProcessingStatus
-from artlake.scrape.pages import (
+from artlake.events.scrape import (
     extract_from_html,
     fetch_html,
     fetch_llms_txt,
@@ -17,6 +16,7 @@ from artlake.scrape.pages import (
     is_allowed_by_robots,
     scrape_url,
 )
+from artlake.models.event import ProcessingStatus
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -119,21 +119,21 @@ class TestExtractFromHtml:
 
 class TestRobotsTxt:
     def test_allowed_when_robots_unreachable(self) -> None:
-        with patch("artlake.scrape.pages.RobotFileParser") as mock_cls:
+        with patch("artlake.events.scrape.RobotFileParser") as mock_cls:
             rp = MagicMock()
             rp.read.side_effect = Exception("timeout")
             mock_cls.return_value = rp
             assert is_allowed_by_robots("https://example.com/event") is True
 
     def test_disallowed_when_robots_blocks_path(self) -> None:
-        with patch("artlake.scrape.pages.RobotFileParser") as mock_cls:
+        with patch("artlake.events.scrape.RobotFileParser") as mock_cls:
             rp = MagicMock()
             rp.can_fetch.return_value = False
             mock_cls.return_value = rp
             assert is_allowed_by_robots("https://example.com/private") is False
 
     def test_allowed_when_robots_permits(self) -> None:
-        with patch("artlake.scrape.pages.RobotFileParser") as mock_cls:
+        with patch("artlake.events.scrape.RobotFileParser") as mock_cls:
             rp = MagicMock()
             rp.can_fetch.return_value = True
             mock_cls.return_value = rp
@@ -150,20 +150,20 @@ class TestFetchLlmsTxt:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.text = "# My Site\n> A description\n"
-        with patch("artlake.scrape.pages.requests.get", return_value=mock_resp):
+        with patch("artlake.events.scrape.requests.get", return_value=mock_resp):
             result = fetch_llms_txt("https://example.com/event")
         assert result == "# My Site\n> A description\n"
 
     def test_returns_none_on_404(self) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 404
-        with patch("artlake.scrape.pages.requests.get", return_value=mock_resp):
+        with patch("artlake.events.scrape.requests.get", return_value=mock_resp):
             result = fetch_llms_txt("https://example.com/event")
         assert result is None
 
     def test_returns_none_on_request_error(self) -> None:
         with patch(
-            "artlake.scrape.pages.requests.get",
+            "artlake.events.scrape.requests.get",
             side_effect=requests.RequestException("timeout"),
         ):
             result = fetch_llms_txt("https://example.com/event")
@@ -180,7 +180,7 @@ class TestFetchHtml:
         mock_resp = MagicMock()
         mock_resp.text = "<html><body>Hello</body></html>"
         mock_resp.raise_for_status.return_value = None
-        with patch("artlake.scrape.pages.requests.get", return_value=mock_resp):
+        with patch("artlake.events.scrape.requests.get", return_value=mock_resp):
             html, error = fetch_html("https://example.com/event")
         assert html == "<html><body>Hello</body></html>"
         assert error is None
@@ -188,7 +188,7 @@ class TestFetchHtml:
     def test_returns_none_on_http_error(self) -> None:
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = requests.HTTPError("404")
-        with patch("artlake.scrape.pages.requests.get", return_value=mock_resp):
+        with patch("artlake.events.scrape.requests.get", return_value=mock_resp):
             html, error = fetch_html("https://example.com/event")
         assert html is None
         assert error is not None
@@ -196,7 +196,7 @@ class TestFetchHtml:
 
     def test_returns_none_on_connection_error(self) -> None:
         with patch(
-            "artlake.scrape.pages.requests.get",
+            "artlake.events.scrape.requests.get",
             side_effect=requests.ConnectionError("refused"),
         ):
             html, error = fetch_html("https://example.com/event")
@@ -217,7 +217,7 @@ class TestScrapeUrl:
         return rp
 
     def test_returns_failed_when_robots_disallows(self) -> None:
-        with patch("artlake.scrape.pages.RobotFileParser") as mock_cls:
+        with patch("artlake.events.scrape.RobotFileParser") as mock_cls:
             mock_cls.return_value = self._mock_robots(False)
             page = scrape_url("https://example.com/event", respect_robots=True)
         assert page.processing_status == ProcessingStatus.FAILED
@@ -225,8 +225,8 @@ class TestScrapeUrl:
 
     def test_uses_llms_txt_when_available(self) -> None:
         with (
-            patch("artlake.scrape.pages.RobotFileParser") as mock_cls,
-            patch("artlake.scrape.pages.fetch_llms_txt", return_value="# Site docs"),
+            patch("artlake.events.scrape.RobotFileParser") as mock_cls,
+            patch("artlake.events.scrape.fetch_llms_txt", return_value="# Site docs"),
         ):
             mock_cls.return_value = self._mock_robots(True)
             page = scrape_url("https://example.com/event")
@@ -236,8 +236,8 @@ class TestScrapeUrl:
     def test_falls_back_to_html_when_no_llms_txt(self) -> None:
         html = _html("event_with_pdf.html")
         with (
-            patch("artlake.scrape.pages.fetch_llms_txt", return_value=None),
-            patch("artlake.scrape.pages.fetch_html", return_value=(html, None)),
+            patch("artlake.events.scrape.fetch_llms_txt", return_value=None),
+            patch("artlake.events.scrape.fetch_html", return_value=(html, None)),
         ):
             page = scrape_url("https://example.com/event")
         assert "Open Call" in page.raw_text
@@ -245,9 +245,9 @@ class TestScrapeUrl:
 
     def test_returns_failed_when_html_fetch_fails(self) -> None:
         with (
-            patch("artlake.scrape.pages.fetch_llms_txt", return_value=None),
+            patch("artlake.events.scrape.fetch_llms_txt", return_value=None),
             patch(
-                "artlake.scrape.pages.fetch_html",
+                "artlake.events.scrape.fetch_html",
                 return_value=(None, "ConnectionError: refused"),
             ),
         ):
@@ -258,9 +258,9 @@ class TestScrapeUrl:
     def test_fingerprint_matches_url(self) -> None:
         url = "https://example.com/event"
         with (
-            patch("artlake.scrape.pages.fetch_llms_txt", return_value=None),
+            patch("artlake.events.scrape.fetch_llms_txt", return_value=None),
             patch(
-                "artlake.scrape.pages.fetch_html", return_value=("<html></html>", None)
+                "artlake.events.scrape.fetch_html", return_value=("<html></html>", None)
             ),
         ):
             page = scrape_url(url)
@@ -269,8 +269,8 @@ class TestScrapeUrl:
     def test_artifact_urls_detected(self) -> None:
         html = _html("event_with_pdf.html")
         with (
-            patch("artlake.scrape.pages.fetch_llms_txt", return_value=None),
-            patch("artlake.scrape.pages.fetch_html", return_value=(html, None)),
+            patch("artlake.events.scrape.fetch_llms_txt", return_value=None),
+            patch("artlake.events.scrape.fetch_html", return_value=(html, None)),
         ):
             page = scrape_url("https://example.com/event")
         assert len(page.artifact_urls) > 0
@@ -280,8 +280,8 @@ class TestScrapeUrl:
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = requests.HTTPError(str(status_code))
         with (
-            patch("artlake.scrape.pages.fetch_llms_txt", return_value=None),
-            patch("artlake.scrape.pages.requests.get", return_value=mock_resp),
+            patch("artlake.events.scrape.fetch_llms_txt", return_value=None),
+            patch("artlake.events.scrape.requests.get", return_value=mock_resp),
         ):
             page = scrape_url("https://example.com/event")
         assert page.processing_status == ProcessingStatus.FAILED

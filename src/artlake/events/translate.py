@@ -2,14 +2,13 @@
 
 Entry point: artlake-translate
 
-Reads art-categorised, geocoded CleanEvent records from
-artlake.bronze.raw_events (category NOT IN ('non_art') AND
-processing_status = 'done'), joins their ProcessedArtifact rows from
-artlake.bronze.processed_artifacts, translates all text in one LLM call
+Reads EventDetails records from artlake.silver.event_details (category NOT IN
+('non_art')), joins their EventArtifactsProcessed rows from
+artlake.silver.event_artifacts_details, translates all text in one LLM call
 per event, and writes:
 
-  artlake.silver.events              — translated event fields
-  artlake.silver.processed_artifacts — translated artifact content
+  artlake.silver.event_details_translated    — translated event fields
+  artlake.silver.event_artifacts_details_translated  — translated artifact content
 
 Events already in the target language are promoted to silver without an
 LLM call (original == translated).
@@ -27,7 +26,11 @@ import yaml
 from loguru import logger
 from openai import OpenAI
 
-from artlake.models.event import ProcessingStatus, SilverArtifact, SilverEvent
+from artlake.models.event import (
+    EventArtifactsTranslated,
+    EventDetailsTranslated,
+    ProcessingStatus,
+)
 
 if TYPE_CHECKING:
     from pyspark.sql import SparkSession
@@ -38,10 +41,12 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 _DEFAULT_MODEL = "databricks-meta-llama-3-3-70b-instruct"
-_RAW_EVENTS_TABLE_DEFAULT = "artlake.bronze.categorised_events"
-_PROCESSED_ARTIFACTS_TABLE_DEFAULT = "artlake.bronze.processed_artifacts"
-_SILVER_EVENTS_TABLE_DEFAULT = "artlake.silver.events"
-_SILVER_ARTIFACTS_TABLE_DEFAULT = "artlake.silver.processed_artifacts"
+_EVENT_DETAILS_TABLE_DEFAULT = "artlake.silver.event_details"
+_EVENT_ARTIFACTS_PROCESSED_TABLE_DEFAULT = "artlake.silver.event_artifacts_details"
+_EVENT_DETAILS_TRANSLATED_TABLE_DEFAULT = "artlake.silver.event_details_translated"
+_EVENT_ARTIFACTS_TRANSLATED_TABLE_DEFAULT = (
+    "artlake.silver.event_artifacts_details_translated"
+)
 
 _EVENT_FIELDS = ["title", "description", "location_text"]
 _ARTIFACT_FIELDS = ["extracted_text", "deadline", "requirements", "location", "fees"]
@@ -164,7 +169,7 @@ def parse_translation_response(
     return {"event": event_out, "artifacts": artifacts_out}
 
 
-def make_silver_event(
+def make_event_details_translated(
     fingerprint: str,
     url: str,
     source: str,
@@ -182,42 +187,13 @@ def make_silver_event(
     language: str,
     target_language: str,
     artifact_urls: list[str],
-    artifact_paths: list[str],
     ingested_at: datetime | str,
     translated_title: str | None,
     translated_description: str | None,
     translated_location_text: str | None,
-) -> SilverEvent:
-    """Construct a SilverEvent, falling back to original text on null translation.
-
-    Args:
-        fingerprint: Event fingerprint (SHA256 of URL).
-        url: Canonical event URL.
-        source: Search result source domain.
-        category: Art category assigned by the categorisation step.
-        title_original: Event title in source language.
-        description_original: Event description in source language.
-        location_text_original: Location text in source language.
-        date_start: Parsed event start date (datetime or None).
-        date_end: Parsed event end date (datetime or None).
-        lat: Latitude from geocoding.
-        lng: Longitude from geocoding.
-        country: ISO country code.
-        query_country: Country used in the original search query.
-        domain_country: Country inferred from the event URL domain.
-        language: Source language code (BCP-47, e.g. ``"nl"``).
-        target_language: Translation target language code.
-        artifact_urls: URLs of attached artifacts.
-        artifact_paths: UC Volume paths of downloaded artifacts.
-        ingested_at: Timestamp from the original CleanEvent record.
-        translated_title: LLM-translated title, or None (falls back to original).
-        translated_description: LLM-translated description, or None.
-        translated_location_text: LLM-translated location text, or None.
-
-    Returns:
-        A :class:`SilverEvent` ready to be written to Delta.
-    """
-    return SilverEvent(
+) -> EventDetailsTranslated:
+    """Construct an EventDetailsTranslated; fall back to originals on null translation."""
+    return EventDetailsTranslated(
         fingerprint=fingerprint,
         url=url,  # type: ignore[arg-type]
         source=source,
@@ -238,12 +214,11 @@ def make_silver_event(
         language=language,
         target_language=target_language,
         artifact_urls=artifact_urls,
-        artifact_paths=artifact_paths,
         ingested_at=_parse_ts(ingested_at),
     )
 
 
-def make_silver_artifact(
+def make_event_artifacts_details_translated(
     artifact_id: str,
     event_id: str,
     artifact_type: str,
@@ -256,27 +231,9 @@ def make_silver_artifact(
     translated_requirements: str | None,
     translated_location: str | None,
     translated_fees: str | None,
-) -> SilverArtifact:
-    """Construct a SilverArtifact, falling back to originals on null translation.
-
-    Args:
-        artifact_id: Artifact ID (SHA256 of artifact URL).
-        event_id: Parent event fingerprint.
-        artifact_type: ``'pdf'`` or ``'image'``.
-        file_path: UC Volume path of the raw artifact file.
-        extracted_text_original: Full extracted text in source language.
-        processed_at: Timestamp from the original ProcessedArtifact record.
-        target_language: Translation target language code.
-        translated_extracted_text: Translated extracted text, or None.
-        translated_deadline: Translated deadline, or None.
-        translated_requirements: Translated requirements, or None.
-        translated_location: Translated location, or None.
-        translated_fees: Translated fees, or None.
-
-    Returns:
-        A :class:`SilverArtifact` ready to be written to Delta.
-    """
-    return SilverArtifact(
+) -> EventArtifactsTranslated:
+    """Construct an EventArtifactsTranslated; fall back to originals for null fields."""
+    return EventArtifactsTranslated(
         id=artifact_id,
         event_id=event_id,
         artifact_type=artifact_type,
@@ -366,7 +323,7 @@ def _translate_text(
 # ---------------------------------------------------------------------------
 
 
-def _silver_event_schema() -> StructType:  # pragma: no cover
+def _event_details_translated_schema() -> StructType:  # pragma: no cover
     from pyspark.sql.types import (
         ArrayType,
         DoubleType,
@@ -398,7 +355,6 @@ def _silver_event_schema() -> StructType:  # pragma: no cover
             StructField("language", StringType(), False),
             StructField("target_language", StringType(), False),
             StructField("artifact_urls", ArrayType(StringType()), False),
-            StructField("artifact_paths", ArrayType(StringType()), False),
             StructField("ingested_at", TimestampType(), False),
             StructField("translated_at", TimestampType(), False),
             StructField("processing_status", StringType(), False),
@@ -406,7 +362,7 @@ def _silver_event_schema() -> StructType:  # pragma: no cover
     )
 
 
-def _silver_artifact_schema() -> StructType:  # pragma: no cover
+def _event_artifacts_details_translated_schema() -> StructType:  # pragma: no cover
     from pyspark.sql.types import StringType, StructField, StructType, TimestampType
 
     return StructType(
@@ -429,12 +385,12 @@ def _silver_artifact_schema() -> StructType:  # pragma: no cover
     )
 
 
-def _write_silver_event(  # pragma: no cover
+def _write_event_details_translated(  # pragma: no cover
     spark: SparkSession,
-    event: SilverEvent,
+    event: EventDetailsTranslated,
     table: str,
 ) -> None:
-    schema = _silver_event_schema()
+    schema = _event_details_translated_schema()
     row = event.model_dump(mode="python")
     row["url"] = str(row["url"])
 
@@ -453,12 +409,12 @@ def _write_silver_event(  # pragma: no cover
     )
 
 
-def _write_silver_artifact(  # pragma: no cover
+def _write_event_artifacts_details_translated(  # pragma: no cover
     spark: SparkSession,
-    artifact: SilverArtifact,
+    artifact: EventArtifactsTranslated,
     table: str,
 ) -> None:
-    schema = _silver_artifact_schema()
+    schema = _event_artifacts_details_translated_schema()
     row = artifact.model_dump(mode="python")
 
     df = spark.createDataFrame([row], schema=schema)
@@ -477,15 +433,14 @@ def _write_silver_artifact(  # pragma: no cover
 
 
 def run_list(  # pragma: no cover
-    raw_events_table: str,
-    silver_events_table: str,
+    event_details_table: str,
+    event_details_translated_table: str,
     limit: int = 0,
 ) -> list[str]:
     """Emit fingerprints of events not yet translated as a Databricks task value.
 
-    Reads ``raw_events`` where ``category NOT IN ('non_art') AND
-    processing_status = 'done'`` and anti-joins with ``silver_events``
-    (already translated) so events are not translated twice.
+    Reads ``event_details`` where ``category NOT IN ('non_art')`` and anti-joins
+    with ``event_details_translated`` so events are not translated twice.
 
     Returns the list of fingerprints to translate.
     """
@@ -495,24 +450,23 @@ def run_list(  # pragma: no cover
     spark = SparkSession.builder.getOrCreate()
 
     pending_df = (
-        spark.table(raw_events_table)
-        .filter(
-            (F.col("category") != "non_art")
-            & (F.col("processing_status") == ProcessingStatus.DONE.value)
-        )
+        spark.table(event_details_table)
+        .filter(F.col("category") != "non_art")
         .select("fingerprint")
         .distinct()
     )
 
-    if spark.catalog.tableExists(silver_events_table):
+    if spark.catalog.tableExists(event_details_translated_table):
         done_df = (
-            spark.table(silver_events_table)
+            spark.table(event_details_translated_table)
             .filter(F.col("processing_status") == ProcessingStatus.DONE.value)
             .select("fingerprint")
         )
         pending_df = pending_df.join(done_df, on="fingerprint", how="left_anti")
     else:
-        logger.info("silver.events table does not exist yet — all events are new")
+        logger.info(
+            "event_details_translated table does not exist yet — all events are new"
+        )
 
     if limit > 0:
         pending_df = pending_df.limit(limit)
@@ -533,19 +487,19 @@ def run_list(  # pragma: no cover
 
 def run_translate(  # pragma: no cover
     fingerprint: str,
-    raw_events_table: str,
-    processed_artifacts_table: str,
-    silver_events_table: str,
-    silver_artifacts_table: str,
+    event_details_table: str,
+    event_artifacts_details_table: str,
+    event_details_translated_table: str,
+    event_artifacts_details_translated_table: str,
     target_language: str,
     model: str = _DEFAULT_MODEL,
 ) -> None:
-    """Translate one event and its artifacts, writing to the silver tables.
+    """Translate one event and its artifacts, writing to the silver translated tables.
 
-    Reads the CleanEvent record from ``raw_events`` and all ProcessedArtifact
-    rows for that event from ``processed_artifacts``.  If the event language
-    matches the target language, fields are promoted to silver unchanged.
-    Otherwise a single LLM call translates all text fields at once.
+    Reads the EventDetails record from ``event_details`` and all
+    EventArtifactsProcessed rows for that event from
+    ``event_artifacts_details``.  If the event language matches the target
+    language, fields are promoted without an LLM call.
     """
     from pyspark.sql import SparkSession
     from pyspark.sql import functions as F
@@ -554,21 +508,21 @@ def run_translate(  # pragma: no cover
 
     # -- Read event -----------------------------------------------------------
     event_rows = (
-        spark.table(raw_events_table)
+        spark.table(event_details_table)
         .filter(F.col("fingerprint") == fingerprint)
         .limit(1)
         .collect()
     )
     if not event_rows:
-        logger.warning("No raw_event found for fingerprint: {}", fingerprint)
+        logger.warning("No event_details found for fingerprint: {}", fingerprint)
         return
     ev = event_rows[0]
 
     # -- Read artifacts -------------------------------------------------------
     artifact_rows: list[Any] = []
-    if spark.catalog.tableExists(processed_artifacts_table):
+    if spark.catalog.tableExists(event_artifacts_details_table):
         artifact_rows = (
-            spark.table(processed_artifacts_table)
+            spark.table(event_artifacts_details_table)
             .filter(
                 (F.col("event_id") == fingerprint)
                 & (F.col("processing_status") == ProcessingStatus.DONE.value)
@@ -587,13 +541,14 @@ def run_translate(  # pragma: no cover
         }
         for a in artifact_rows
     ]
+
     # -- Translate or copy ----------------------------------------------------
     source_language: str = ev["language"] or ""
     translation: dict[str, Any] = {"event": {}, "artifacts": []}
 
     if source_language == target_language:
         logger.info(
-            "Event {} is already in {} — promoting to silver without translation",
+            "Event {} is already in {} — promoting without translation",
             fingerprint,
             target_language,
         )
@@ -621,8 +576,8 @@ def run_translate(  # pragma: no cover
         a["id"]: a for a in (translation.get("artifacts") or [])
     }
 
-    # -- Write silver.events --------------------------------------------------
-    silver_event = make_silver_event(
+    # -- Write silver.event_details_translated --------------------------------
+    translated_event = make_event_details_translated(
         fingerprint=fingerprint,
         url=str(ev["url"]),
         source=ev["source"],
@@ -640,19 +595,20 @@ def run_translate(  # pragma: no cover
         language=source_language,
         target_language=target_language,
         artifact_urls=list(ev["artifact_urls"] or []),
-        artifact_paths=list(ev["artifact_paths"] or []),
         ingested_at=ev["ingested_at"],
         translated_title=event_translation.get("title"),
         translated_description=event_translation.get("description"),
         translated_location_text=event_translation.get("location_text"),
     )
-    _write_silver_event(spark, silver_event, silver_events_table)
-    logger.info("Wrote SilverEvent for fingerprint: {}", fingerprint)
+    _write_event_details_translated(
+        spark, translated_event, event_details_translated_table
+    )
+    logger.info("Wrote EventDetailsTranslated for fingerprint: {}", fingerprint)
 
-    # -- Write silver.processed_artifacts -------------------------------------
+    # -- Write silver.event_artifacts_details_translated ------------------------------
     for art in artifact_rows:
         art_translation = artifact_translations.get(art["id"], {})
-        silver_artifact = make_silver_artifact(
+        translated_artifact = make_event_artifacts_details_translated(
             artifact_id=art["id"],
             event_id=art["event_id"],
             artifact_type=art["artifact_type"],
@@ -666,9 +622,13 @@ def run_translate(  # pragma: no cover
             translated_location=art_translation.get("location"),
             translated_fees=art_translation.get("fees"),
         )
-        _write_silver_artifact(spark, silver_artifact, silver_artifacts_table)
+        _write_event_artifacts_details_translated(
+            spark, translated_artifact, event_artifacts_details_translated_table
+        )
         logger.info(
-            "Wrote SilverArtifact id: {} for fingerprint: {}", art["id"], fingerprint
+            "Wrote EventArtifactsTranslated id: {} for fingerprint: {}",
+            art["id"],
+            fingerprint,
         )
 
 
@@ -699,24 +659,24 @@ def main() -> None:  # pragma: no cover
         help="Path to config/input/keywords.yml (provides target_language)",
     )
     parser.add_argument(
-        "--raw-events-table",
-        default=_RAW_EVENTS_TABLE_DEFAULT,
-        help="Fully-qualified raw_events Delta table",
+        "--event-details-table",
+        default=_EVENT_DETAILS_TABLE_DEFAULT,
+        help="Fully-qualified silver.event_details Delta table",
     )
     parser.add_argument(
-        "--processed-artifacts-table",
-        default=_PROCESSED_ARTIFACTS_TABLE_DEFAULT,
-        help="Fully-qualified processed_artifacts Delta table",
+        "--event-artifacts-processed-table",
+        default=_EVENT_ARTIFACTS_PROCESSED_TABLE_DEFAULT,
+        help="Fully-qualified silver.event_artifacts_details Delta table",
     )
     parser.add_argument(
-        "--silver-events-table",
-        default=_SILVER_EVENTS_TABLE_DEFAULT,
-        help="Fully-qualified silver.events Delta table",
+        "--event-details-translated-table",
+        default=_EVENT_DETAILS_TRANSLATED_TABLE_DEFAULT,
+        help="Fully-qualified silver.event_details_translated Delta table",
     )
     parser.add_argument(
-        "--silver-artifacts-table",
-        default=_SILVER_ARTIFACTS_TABLE_DEFAULT,
-        help="Fully-qualified silver.processed_artifacts Delta table",
+        "--event-artifacts-translated-table",
+        default=_EVENT_ARTIFACTS_TRANSLATED_TABLE_DEFAULT,
+        help="Fully-qualified silver.event_artifacts_details_translated Delta table",
     )
     parser.add_argument(
         "--model",
@@ -740,8 +700,8 @@ def main() -> None:  # pragma: no cover
 
     if args.mode == "list":
         run_list(
-            raw_events_table=args.raw_events_table,
-            silver_events_table=args.silver_events_table,
+            event_details_table=args.event_details_table,
+            event_details_translated_table=args.event_details_translated_table,
             limit=args.limit,
         )
     else:
@@ -749,10 +709,10 @@ def main() -> None:  # pragma: no cover
             parser.error("--fingerprint is required for --mode translate")
         run_translate(
             fingerprint=args.fingerprint,
-            raw_events_table=args.raw_events_table,
-            processed_artifacts_table=args.processed_artifacts_table,
-            silver_events_table=args.silver_events_table,
-            silver_artifacts_table=args.silver_artifacts_table,
+            event_details_table=args.event_details_table,
+            event_artifacts_details_table=args.event_artifacts_details_table,
+            event_details_translated_table=args.event_details_translated_table,
+            event_artifacts_details_translated_table=args.event_artifacts_details_translated_table,
             target_language=target_language,
             model=args.model,
         )

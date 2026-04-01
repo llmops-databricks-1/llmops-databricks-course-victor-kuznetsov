@@ -2,8 +2,9 @@
 
 Entry point: artlake-download-artifacts
 
-Reads artifact_urls from artlake.bronze.raw_events where processing_status = 'done',
-downloads files to UC Volume, and writes EventArtifact records to bronze.raw_artifacts.
+Reads artifact_urls from artlake.bronze.event_dates where event_status IN
+('future', 'undefined'), downloads files to UC Volume, and writes EventArtifact
+records to bronze.event_artifacts.
 """
 
 from __future__ import annotations
@@ -17,8 +18,8 @@ from urllib.parse import urlparse
 import requests
 from loguru import logger
 
+from artlake.events.scrape import fingerprint as url_fingerprint
 from artlake.models.event import EventArtifact, ProcessingStatus
-from artlake.scrape.pages import fingerprint as url_fingerprint
 
 if TYPE_CHECKING:
     from pyspark.sql import SparkSession
@@ -32,7 +33,7 @@ _USER_AGENT = "artlake-scraper/1.0"
 _TIMEOUT = 30
 _MAX_BYTES_DEFAULT = 50 * 1024 * 1024  # 50 MB
 _CHUNK_SIZE = 65_536
-_VOLUME_ROOT_DEFAULT = "/Volumes/artlake/volumes/raw_artifacts"
+_VOLUME_ROOT_DEFAULT = "/Volumes/artlake/volumes/event_artifacts"
 
 
 # ---------------------------------------------------------------------------
@@ -196,13 +197,17 @@ def _write_artifact(  # pragma: no cover
 
 
 def run_list(  # pragma: no cover
-    raw_events_table: str,
-    artifacts_table: str,
+    event_dates_table: str,
+    event_artifacts_table: str,
     limit: int = 0,
 ) -> list[str]:
-    """Explode artifact_urls from done raw_events; emit unseen URLs as a task value.
+    """Explode artifact_urls from future/undefined events.
 
-    Anti-joins against bronze.artifacts so already-downloaded URLs are skipped.
+    Emits unseen URLs as a task value.
+
+    Pipeline gate: only events with event_status IN ('future', 'undefined') have
+    their artifacts downloaded.  Anti-joins against event_artifacts so
+    already-downloaded URLs are skipped.
     Returns the list of artifact URLs to process.
     """
     from pyspark.sql import SparkSession
@@ -210,11 +215,9 @@ def run_list(  # pragma: no cover
 
     spark = SparkSession.builder.getOrCreate()
 
-    _SKIP_STATUSES = [ProcessingStatus.OUTDATED, ProcessingStatus.FAILED]
-
     events_df = (
-        spark.table(raw_events_table)
-        .filter(~F.col("processing_status").isin([s.value for s in _SKIP_STATUSES]))
+        spark.table(event_dates_table)
+        .filter(F.col("event_status").isin("future", "undefined"))
         .select(F.explode("artifact_urls").alias("artifact_url"))
         .filter(F.col("artifact_url") != "")
         .distinct()
@@ -222,9 +225,9 @@ def run_list(  # pragma: no cover
 
     _TERMINAL_STATUSES = [ProcessingStatus.DOWNLOADED, ProcessingStatus.FAILED]
 
-    if spark.catalog.tableExists(artifacts_table):
+    if spark.catalog.tableExists(event_artifacts_table):
         terminal_df = (
-            spark.table(artifacts_table)
+            spark.table(event_artifacts_table)
             .filter(
                 F.col("processing_status").isin([s.value for s in _TERMINAL_STATUSES])
             )
@@ -232,7 +235,9 @@ def run_list(  # pragma: no cover
         )
         events_df = events_df.join(terminal_df, on="artifact_url", how="left_anti")
     else:
-        logger.info("artifacts table does not exist yet — all artifact URLs are unseen")
+        logger.info(
+            "event_artifacts table does not exist yet — all artifact URLs are unseen"
+        )
 
     if limit > 0:
         events_df = events_df.limit(limit)
@@ -253,15 +258,15 @@ def run_list(  # pragma: no cover
 
 def run_download(  # pragma: no cover
     artifact_url: str,
-    raw_events_table: str,
-    artifacts_table: str,
+    event_dates_table: str,
+    event_artifacts_table: str,
     volume_root: str = _VOLUME_ROOT_DEFAULT,
     max_bytes: int = _MAX_BYTES_DEFAULT,
     env: str = "dev",
 ) -> None:
-    """Download one artifact and write an EventArtifact record to bronze.artifacts.
+    """Download one artifact and write an EventArtifact record to bronze.event_artifacts.
 
-    Looks up the parent event fingerprint from raw_events.
+    Looks up the parent event fingerprint from event_dates.
     Applies content-hash deduplication — skips identical files already stored.
     The record is only written after a successful volume upload, so a mid-download
     crash leaves no record and the URL will be retried on the next run.
@@ -273,20 +278,16 @@ def run_download(  # pragma: no cover
 
     _ensure_volume(spark, volume_root)
 
-    # Resolve parent event URL from raw_events and compute its ID locally.
-    _SKIP_STATUSES = [ProcessingStatus.OUTDATED, ProcessingStatus.FAILED]
+    # Resolve parent event URL from event_dates
     rows = (
-        spark.table(raw_events_table)
-        .filter(
-            ~F.col("processing_status").isin([s.value for s in _SKIP_STATUSES])
-            & F.array_contains(F.col("artifact_urls"), artifact_url)
-        )
+        spark.table(event_dates_table)
+        .filter(F.array_contains(F.col("artifact_urls"), artifact_url))
         .select("url")
         .limit(1)
         .collect()
     )
     if not rows:
-        logger.warning("No matching raw_event found for artifact URL: {}", artifact_url)
+        logger.warning("No matching event_date found for artifact URL: {}", artifact_url)
         return
 
     event_id: str = url_fingerprint(rows[0]["url"])
@@ -298,7 +299,7 @@ def run_download(  # pragma: no cover
         artifact = make_artifact(
             artifact_url, event_id, artifact_type, None, ProcessingStatus.FAILED
         )
-        _write_artifact(spark, artifact, artifacts_table)
+        _write_artifact(spark, artifact, event_artifacts_table)
         logger.warning(
             "Wrote failed EventArtifact for {} — error: {}", artifact_url, error
         )
@@ -307,9 +308,9 @@ def run_download(  # pragma: no cover
     hash_val = content_hash(data)
 
     # Content-hash dedup
-    if spark.catalog.tableExists(artifacts_table):
+    if spark.catalog.tableExists(event_artifacts_table):
         existing = (
-            spark.table(artifacts_table)
+            spark.table(event_artifacts_table)
             .filter(F.col("content_hash") == hash_val)
             .limit(1)
             .collect()
@@ -338,16 +339,16 @@ def run_download(  # pragma: no cover
         ProcessingStatus.DOWNLOADED,
         hash_val,
     )
-    _write_artifact(spark, artifact, artifacts_table)
-    logger.info("Wrote EventArtifact for {} to {}", artifact_url, artifacts_table)
+    _write_artifact(spark, artifact, event_artifacts_table)
+    logger.info("Wrote EventArtifact for {} to {}", artifact_url, event_artifacts_table)
 
 
 def main() -> None:  # pragma: no cover
     """Entry point for artlake-download-artifacts wheel task.
 
     Two modes:
-      list     — Explode artifact_urls from done raw_events and emit the list as a
-                 Databricks task value for a downstream for_each_task.
+      list     — Explode artifact_urls from future/undefined events and emit the
+                 list as a Databricks task value for a downstream for_each_task.
       download — Download a single artifact URL (for_each inner task).
     """
     import argparse
@@ -365,14 +366,14 @@ def main() -> None:  # pragma: no cover
         help="Artifact URL to download (required for --mode download)",
     )
     parser.add_argument(
-        "--raw-events-table",
-        default="artlake.bronze.raw_events",
-        help="Fully-qualified raw_events Delta table",
+        "--event-dates-table",
+        default="artlake.bronze.event_dates",
+        help="Fully-qualified bronze.event_dates Delta table",
     )
     parser.add_argument(
-        "--artifacts-table",
-        default="artlake.bronze.raw_artifacts",
-        help="Fully-qualified artifacts Delta table",
+        "--event-artifacts-table",
+        default="artlake.bronze.event_artifacts",
+        help="Fully-qualified bronze.event_artifacts Delta table",
     )
     parser.add_argument(
         "--volume-root",
@@ -400,8 +401,8 @@ def main() -> None:  # pragma: no cover
 
     if args.mode == "list":
         run_list(
-            raw_events_table=args.raw_events_table,
-            artifacts_table=args.artifacts_table,
+            event_dates_table=args.event_dates_table,
+            event_artifacts_table=args.event_artifacts_table,
             limit=args.limit,
         )
     else:
@@ -409,8 +410,8 @@ def main() -> None:  # pragma: no cover
             parser.error("--artifact-url is required for --mode download")
         run_download(
             artifact_url=args.artifact_url,
-            raw_events_table=args.raw_events_table,
-            artifacts_table=args.artifacts_table,
+            event_dates_table=args.event_dates_table,
+            event_artifacts_table=args.event_artifacts_table,
             volume_root=args.volume_root,
             max_bytes=args.max_bytes,
             env=args.env,

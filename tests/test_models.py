@@ -7,9 +7,9 @@ from pydantic import HttpUrl, ValidationError
 
 from artlake.models import (
     ArtLakeConfig,
-    CleanEvent,
     EventArtifact,
-    GoldEvent,
+    EventDate,
+    EventStatus,
     ProcessingStatus,
     RawEvent,
     SeenUrl,
@@ -69,13 +69,13 @@ class TestRawEvent:
 
 
 # ---------------------------------------------------------------------------
-# CleanEvent
+# EventDate
 # ---------------------------------------------------------------------------
 
 
-class TestCleanEvent:
+class TestEventDate:
     def test_valid(self) -> None:
-        event = CleanEvent(
+        event = EventDate(
             fingerprint="abc123",
             title="Art Market",
             description="Annual art market in Amsterdam",
@@ -85,32 +85,28 @@ class TestCleanEvent:
             url="https://example.com/market",
         )
         assert event.date_start is None
-        assert event.lat is None
-        assert event.artifact_paths == []
+        assert event.artifact_urls == []
+        assert event.event_status == EventStatus.UNDEFINED
 
-    def test_with_dates_and_geo(self) -> None:
-        event = CleanEvent(
+    def test_with_dates_and_query_country(self) -> None:
+        event = EventDate(
             fingerprint="abc123",
             title="Art Market",
             description="Annual art market",
             date_start=datetime(2026, 6, 1, tzinfo=UTC),
             date_end=datetime(2026, 6, 3, tzinfo=UTC),
             location_text="Amsterdam",
-            lat=52.3676,
-            lng=4.9041,
             query_country="NL",
             domain_country="NL",
-            country="NL",
             language="en",
             source="duckduckgo",
             url="https://example.com/market",
         )
-        assert event.country == "NL"
         assert event.query_country == "NL"
         assert event.domain_country == "NL"
 
     def test_country_fields_default_to_none(self) -> None:
-        event = CleanEvent(
+        event = EventDate(
             fingerprint="abc123",
             title="Art Market",
             description="Annual art market",
@@ -121,58 +117,26 @@ class TestCleanEvent:
         )
         assert event.query_country is None
         assert event.domain_country is None
-        assert event.country is None
 
-    def test_missing_required(self) -> None:
-        with pytest.raises(ValidationError):
-            CleanEvent(
-                title="Art Market",
-                # missing description, location_text, language, source, url
-            )
-
-
-# ---------------------------------------------------------------------------
-# GoldEvent
-# ---------------------------------------------------------------------------
-
-
-class TestGoldEvent:
-    def test_valid(self) -> None:
-        event = GoldEvent(
+    def test_event_status_values(self) -> None:
+        event = EventDate(
+            fingerprint="abc123",
             title="Art Market",
             description="Annual art market",
             location_text="Amsterdam",
             language="en",
             source="duckduckgo",
             url="https://example.com/market",
-            category="market",
+            event_status=EventStatus.FUTURE,
         )
-        assert event.artifact_summaries == []
+        assert event.event_status == EventStatus.FUTURE
 
-    def test_missing_category(self) -> None:
+    def test_missing_required(self) -> None:
         with pytest.raises(ValidationError):
-            GoldEvent(
+            EventDate(
                 title="Art Market",
-                description="Annual art market",
-                location_text="Amsterdam",
-                language="en",
-                source="duckduckgo",
-                url="https://example.com/market",
-                # missing category
+                # missing fingerprint, description, location_text, language, source, url
             )
-
-    def test_with_summaries(self) -> None:
-        event = GoldEvent(
-            title="Open Call",
-            description="Submit your work",
-            location_text="Berlin",
-            language="en",
-            source="duckduckgo",
-            url="https://example.com/call",
-            category="open_call",
-            artifact_summaries=["Deadline: 2026-07-01, Fee: €25"],
-        )
-        assert len(event.artifact_summaries) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +163,7 @@ class TestEventArtifact:
             url="https://example.com/poster.jpg",
             artifact_type="image",
             content_hash="deadbeef" * 8,
-            file_path="/volumes/raw_artifacts/abc/poster.jpg",
+            file_path="/volumes/event_artifacts/abc/poster.jpg",
             processing_status=ProcessingStatus.DONE,
         )
         assert artifact.processing_status == ProcessingStatus.DONE
@@ -297,8 +261,6 @@ class TestProcessingStatus:
             ProcessingStatus.DOWNLOADED,
             ProcessingStatus.DONE,
             ProcessingStatus.FAILED,
-            ProcessingStatus.OUTDATED,
-            ProcessingStatus.REQUIRES_MANUAL_VALIDATION,
         }
 
     def test_string_values(self) -> None:
@@ -306,3 +268,22 @@ class TestProcessingStatus:
         assert ProcessingStatus.PROCESSING == "processing"
         assert ProcessingStatus.DONE == "done"
         assert ProcessingStatus.FAILED == "failed"
+
+
+# ---------------------------------------------------------------------------
+# EventStatus enum values
+# ---------------------------------------------------------------------------
+
+
+class TestEventStatus:
+    def test_values(self) -> None:
+        assert set(EventStatus) == {
+            EventStatus.FUTURE,
+            EventStatus.FINISHED,
+            EventStatus.UNDEFINED,
+        }
+
+    def test_string_values(self) -> None:
+        assert EventStatus.FUTURE == "future"
+        assert EventStatus.FINISHED == "finished"
+        assert EventStatus.UNDEFINED == "undefined"
