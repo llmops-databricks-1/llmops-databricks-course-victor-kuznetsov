@@ -148,96 +148,40 @@ resources:
               - "--output"
               - "${var.config_root}/config/output/language_patterns.yml"
 
-        - task_key: list_events_to_clean
+        - task_key: extract_dates
           depends_on:
             - task_key: scrape_pages
             - task_key: generate_language_patterns
           environment_key: default
           python_wheel_task:
-            entry_point: artlake-clean-events
+            entry_point: artlake-extract-dates
             package_name: artlake
             parameters:
-              - "--mode"
-              - "list"
               - "--scraped-pages-table"
               - "artlake.staging.scraped_pages"
               - "--search-results-table"
               - "artlake.staging.search_results"
+              - "--event-dates-table"
+              - "artlake.bronze.event_dates"
+              - "--model"
+              - "databricks-meta-llama-3-3-70b-instruct"
               - "--language-patterns"
               - "${var.config_root}/config/output/language_patterns.yml"
               - "--env"
               - "${bundle.target}"
 
-        - task_key: clean_events
-          depends_on:
-            - task_key: list_events_to_clean
-          for_each_task:
-            inputs: "{{tasks.list_events_to_clean.values.urls}}"
-            concurrency: 10
-            task:
-              task_key: clean_event_iteration
-              max_retries: 1
-              environment_key: default
-              python_wheel_task:
-                entry_point: artlake-clean-events
-                package_name: artlake
-                parameters:
-                  - "--mode"
-                  - "clean"
-                  - "--url"
-                  - "{{input}}"
-                  - "--scraped-pages-table"
-                  - "artlake.staging.scraped_pages"
-                  - "--search-results-table"
-                  - "artlake.staging.search_results"
-                  - "--raw-events-table"
-                  - "artlake.bronze.raw_events"
-                  - "--model"
-                  - "databricks-meta-llama-3-3-70b-instruct"
-                  - "--language-patterns"
-                  - "${var.config_root}/config/output/language_patterns.yml"
-                  - "--env"
-                  - "${bundle.target}"
-
-        - task_key: categorise_rules
-          depends_on:
-            - task_key: clean_events
-          environment_key: default
-          python_wheel_task:
-            entry_point: artlake-categorise-rules
-            package_name: artlake
-            parameters:
-              - "--raw-events-table"
-              - "artlake.bronze.raw_events"
-              - "--category-keywords"
-              - "${var.config_root}/config/input/category_keywords.yml"
-
-        - task_key: categorise_llm
-          depends_on:
-            - task_key: categorise_rules
-            - task_key: generate_category_examples
-          environment_key: default
-          python_wheel_task:
-            entry_point: artlake-categorise-llm
-            package_name: artlake
-            parameters:
-              - "--raw-events-table"
-              - "artlake.bronze.raw_events"
-              - "--categorised-events-table"
-              - "artlake.bronze.categorised_events"
-              - "--category-examples"
-              - "${var.config_root}/config/output/category_examples.yml"
-
         - task_key: geocode
           depends_on:
-            - task_key: categorise_llm
+            - task_key: extract_dates
           environment_key: default
           python_wheel_task:
             entry_point: artlake-geocode
             package_name: artlake
             parameters:
-              - "--raw-events-table"
-              - "artlake.bronze.categorised_events"
+              - "--event-dates-table"
+              - "artlake.bronze.event_dates"
+              - "--event-location-table"
+              - "artlake.bronze.event_location"
               - "--target-countries"
               - "NL"
               - "BE"
@@ -246,9 +190,36 @@ resources:
               - "--env"
               - "${bundle.target}"
 
-        - task_key: list_artifacts
+        - task_key: categorise
+          depends_on:
+            - task_key: extract_dates
+            - task_key: generate_category_examples
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-categorise
+            package_name: artlake
+            parameters:
+              - "--event-dates-table"
+              - "artlake.bronze.event_dates"
+              - "--event-category-table"
+              - "artlake.bronze.event_category"
+              - "--category-keywords"
+              - "${var.config_root}/config/input/category_keywords.yml"
+              - "--category-examples"
+              - "${var.config_root}/config/output/category_examples.yml"
+
+        - task_key: enrich_events
           depends_on:
             - task_key: geocode
+            - task_key: categorise
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-enrich-events
+            package_name: artlake
+
+        - task_key: list_artifacts
+          depends_on:
+            - task_key: extract_dates
           environment_key: default
           python_wheel_task:
             entry_point: artlake-download-artifacts
@@ -256,10 +227,10 @@ resources:
             parameters:
               - "--mode"
               - "list"
-              - "--raw-events-table"
-              - "artlake.bronze.categorised_events"
-              - "--artifacts-table"
-              - "artlake.bronze.raw_artifacts"
+              - "--event-dates-table"
+              - "artlake.bronze.event_dates"
+              - "--event-artifacts-table"
+              - "artlake.bronze.event_artifacts"
               - "--env"
               - "${bundle.target}"
 
@@ -281,12 +252,12 @@ resources:
                   - "download"
                   - "--artifact-url"
                   - "{{input}}"
-                  - "--raw-events-table"
-                  - "artlake.bronze.categorised_events"
-                  - "--artifacts-table"
-                  - "artlake.bronze.raw_artifacts"
+                  - "--event-dates-table"
+                  - "artlake.bronze.event_dates"
+                  - "--event-artifacts-table"
+                  - "artlake.bronze.event_artifacts"
                   - "--volume-root"
-                  - "/Volumes/artlake/volumes/raw_artifacts"
+                  - "/Volumes/artlake/volumes/event_artifacts"
                   - "--env"
                   - "${bundle.target}"
 
@@ -300,10 +271,10 @@ resources:
             parameters:
               - "--mode"
               - "list"
-              - "--raw-artifacts-table"
-              - "artlake.bronze.raw_artifacts"
-              - "--processed-artifacts-table"
-              - "artlake.bronze.processed_artifacts"
+              - "--event-artifacts-table"
+              - "artlake.bronze.event_artifacts"
+              - "--raw-event-artifacts-table"
+              - "artlake.bronze.event_artifacts_text"
               - "--env"
               - "${bundle.target}"
 
@@ -325,16 +296,55 @@ resources:
                   - "extract"
                   - "--id"
                   - "{{input}}"
-                  - "--raw-artifacts-table"
-                  - "artlake.bronze.raw_artifacts"
-                  - "--processed-artifacts-table"
-                  - "artlake.bronze.processed_artifacts"
+                  - "--event-artifacts-table"
+                  - "artlake.bronze.event_artifacts"
+                  - "--raw-event-artifacts-table"
+                  - "artlake.bronze.event_artifacts_text"
                   - "--env"
                   - "${bundle.target}"
 
-        - task_key: list_events_to_translate
+        - task_key: list_artifacts_to_enrich
           depends_on:
             - task_key: process_artifacts
+          environment_key: default
+          python_wheel_task:
+            entry_point: artlake-enrich-artifacts
+            package_name: artlake
+            parameters:
+              - "--mode"
+              - "list"
+              - "--raw-event-artifacts-table"
+              - "artlake.bronze.event_artifacts_text"
+              - "--event-artifacts-processed-table"
+              - "artlake.silver.event_artifacts_details"
+
+        - task_key: enrich_artifacts
+          depends_on:
+            - task_key: list_artifacts_to_enrich
+          for_each_task:
+            inputs: "{{tasks.list_artifacts_to_enrich.values.id}}"
+            concurrency: 5
+            task:
+              task_key: enrich_artifact_iteration
+              max_retries: 1
+              environment_key: default
+              python_wheel_task:
+                entry_point: artlake-enrich-artifacts
+                package_name: artlake
+                parameters:
+                  - "--mode"
+                  - "enrich"
+                  - "--id"
+                  - "{{input}}"
+                  - "--raw-event-artifacts-table"
+                  - "artlake.bronze.event_artifacts_text"
+                  - "--event-artifacts-processed-table"
+                  - "artlake.silver.event_artifacts_details"
+
+        - task_key: list_events_to_translate
+          depends_on:
+            - task_key: enrich_events
+            - task_key: enrich_artifacts
           environment_key: default
           python_wheel_task:
             entry_point: artlake-translate
@@ -344,10 +354,14 @@ resources:
               - "list"
               - "--keywords"
               - "${var.config_root}/config/input/keywords.yml"
-              - "--raw-events-table"
-              - "artlake.bronze.categorised_events"
-              - "--silver-events-table"
-              - "artlake.silver.events"
+              - "--event-details-table"
+              - "artlake.silver.event_details"
+              - "--event-artifacts-processed-table"
+              - "artlake.silver.event_artifacts_details"
+              - "--event-details-translated-table"
+              - "artlake.silver.event_details_translated"
+              - "--event-artifacts-translated-table"
+              - "artlake.silver.event_artifacts_details_translated"
               - "--env"
               - "${bundle.target}"
 
@@ -371,14 +385,14 @@ resources:
                   - "{{input}}"
                   - "--keywords"
                   - "${var.config_root}/config/input/keywords.yml"
-                  - "--raw-events-table"
-                  - "artlake.bronze.raw_events"
-                  - "--processed-artifacts-table"
-                  - "artlake.bronze.processed_artifacts"
-                  - "--silver-events-table"
-                  - "artlake.silver.events"
-                  - "--silver-artifacts-table"
-                  - "artlake.silver.processed_artifacts"
+                  - "--event-details-table"
+                  - "artlake.silver.event_details"
+                  - "--event-artifacts-processed-table"
+                  - "artlake.silver.event_artifacts_details"
+                  - "--event-details-translated-table"
+                  - "artlake.silver.event_details_translated"
+                  - "--event-artifacts-translated-table"
+                  - "artlake.silver.event_artifacts_details_translated"
                   - "--model"
                   - "databricks-meta-llama-3-3-70b-instruct"
                   - "--env"

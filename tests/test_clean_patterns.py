@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import yaml
 
-from artlake.clean.patterns import (
+from artlake.events.extract_dates import (
     build_field_re,
     generate_patterns,
     load_patterns,

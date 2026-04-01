@@ -1,1 +1,0 @@
-"""ArtLake filter modules."""

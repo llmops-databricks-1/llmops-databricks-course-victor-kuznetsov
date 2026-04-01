@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
-from artlake.categorise.examples import CategoryExamples, FewShotExample
-from artlake.categorise.llm import (
+from artlake.events.categorise import (
+    CategoryExamples,
+    FewShotExample,
     _build_system_prompt,
     _classify_batch,
     _parse_batch_response,

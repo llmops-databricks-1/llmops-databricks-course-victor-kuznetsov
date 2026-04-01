@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from artlake.categorise.rules import classify_text, load_category_keywords
+from artlake.events.categorise import classify_text, load_category_keywords
 
 # ---------------------------------------------------------------------------
 # Fixtures

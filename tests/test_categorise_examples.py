@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import yaml
 
-from artlake.categorise.examples import (
+from artlake.events.categorise import (
     CategoryExamples,
     FewShotExample,
     _call_llm,

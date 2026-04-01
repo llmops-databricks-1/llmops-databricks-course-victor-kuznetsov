@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import hashlib
 
-from artlake.filter.dedup import dedup
 from artlake.models.event import SeenUrl
+from artlake.search.dedup import dedup
 
 # ---------------------------------------------------------------------------
 # Helpers

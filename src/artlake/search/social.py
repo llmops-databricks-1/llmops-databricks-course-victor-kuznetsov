@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 import yaml
 from loguru import logger
 
+from artlake.events.scrape import fingerprint as make_fingerprint
 from artlake.models.event import RawEvent
-from artlake.scrape.pages import fingerprint as make_fingerprint
 from artlake.search.load import load_queries
 from artlake.search.models import SearchQuery
 from artlake.search.web import write_results

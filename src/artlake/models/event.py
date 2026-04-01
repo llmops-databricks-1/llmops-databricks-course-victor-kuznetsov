@@ -10,16 +10,48 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+# ---------------------------------------------------------------------------
+# Status enums
+# ---------------------------------------------------------------------------
+
+
+class EventStatus(StrEnum):
+    """Date-based status for bronze.event_dates."""
+
+    FUTURE = "future"
+    FINISHED = "finished"
+    UNDEFINED = "undefined"
+
+
+class LocationStatus(StrEnum):
+    """Geocoding resolution status for bronze.event_location."""
+
+    IDENTIFIED = "identified"
+    MISSING = "missing"
+    REQUIRES_VALIDATION = "requires_validation"
+
+
+class CategoryStatus(StrEnum):
+    """Classification status for bronze.event_category."""
+
+    IDENTIFIED = "identified"
+    MISSING = "missing"
+    REQUIRES_VALIDATION = "requires_validation"
+
+
 class ProcessingStatus(StrEnum):
-    """Row-level processing status for staging models."""
+    """Row-level processing status for staging models and artifacts."""
 
     NEW = "new"
     PROCESSING = "processing"
     DOWNLOADED = "downloaded"
     DONE = "done"
     FAILED = "failed"
-    OUTDATED = "outdated"
-    REQUIRES_MANUAL_VALIDATION = "requires_manual_validation"
+
+
+# ---------------------------------------------------------------------------
+# Staging models
+# ---------------------------------------------------------------------------
 
 
 class RawEvent(BaseModel):
@@ -40,8 +72,41 @@ class RawEvent(BaseModel):
     ingested_at: datetime = Field(default_factory=_now)
 
 
-class CleanEvent(BaseModel):
-    """Structured event written to bronze.raw_events."""
+class SeenUrl(BaseModel):
+    """Dedup tracker written to staging.seen_urls."""
+
+    model_config = ConfigDict(strict=True)
+
+    url: HttpUrl
+    title: str
+    source: str
+    fingerprint: str
+    ingested_at: datetime = Field(default_factory=_now)
+
+
+class ScrapedPage(BaseModel):
+    """Raw scraped page written to staging.scraped_pages."""
+
+    model_config = ConfigDict(strict=True)
+
+    fingerprint: str
+    url: HttpUrl
+    title: str
+    raw_text: str
+    artifact_urls: list[str] = []
+    processing_status: ProcessingStatus = ProcessingStatus.NEW
+    robots_allowed: bool | None = None
+    error: str | None = None
+    scraped_at: datetime = Field(default_factory=_now)
+
+
+# ---------------------------------------------------------------------------
+# Bronze models
+# ---------------------------------------------------------------------------
+
+
+class EventDate(BaseModel):
+    """Structured event written to bronze.event_dates."""
 
     model_config = ConfigDict(strict=True)
 
@@ -51,45 +116,41 @@ class CleanEvent(BaseModel):
     date_start: datetime | None = None
     date_end: datetime | None = None
     location_text: str
-    lat: float | None = None
-    lng: float | None = None
     query_country: str | None = None
     domain_country: str | None = None
-    country: str | None = None
     language: str
     source: str
     url: HttpUrl
     artifact_urls: list[str] = []
-    artifact_paths: list[str] = []
-    category: str | None = None
-    processing_status: ProcessingStatus = ProcessingStatus.NEW
+    event_status: EventStatus = EventStatus.UNDEFINED
     ingested_at: datetime = Field(default_factory=_now)
 
 
-class GoldEvent(BaseModel):
-    """Enriched event written to gold.events."""
+class EventLocation(BaseModel):
+    """Geocoded location written to bronze.event_location."""
 
     model_config = ConfigDict(strict=True)
 
-    title: str
-    description: str
-    date_start: datetime | None = None
-    date_end: datetime | None = None
+    fingerprint: str
     location_text: str
     lat: float | None = None
     lng: float | None = None
     country: str | None = None
-    language: str
-    source: str
-    url: HttpUrl
-    artifact_paths: list[str] = []
-    category: str
-    artifact_summaries: list[str] = []
-    ingested_at: datetime = Field(default_factory=_now)
+    location_status: LocationStatus = LocationStatus.MISSING
+
+
+class EventCategory(BaseModel):
+    """Classified category written to bronze.event_category."""
+
+    model_config = ConfigDict(strict=True)
+
+    fingerprint: str
+    category: str | None = None
+    category_status: CategoryStatus = CategoryStatus.MISSING
 
 
 class EventArtifact(BaseModel):
-    """Artifact metadata written to bronze.raw_artifacts."""
+    """Artifact metadata written to bronze.event_artifacts."""
 
     model_config = ConfigDict(strict=True)
 
@@ -103,8 +164,61 @@ class EventArtifact(BaseModel):
     ingested_at: datetime = Field(default_factory=_now)
 
 
-class ProcessedArtifact(BaseModel):
-    """Extracted and summarised artifact written to bronze.processed_artifacts."""
+class RawEventArtifact(BaseModel):
+    """Extracted text from artifact written to bronze.event_artifacts_text."""
+
+    model_config = ConfigDict(strict=True)
+
+    id: str
+    event_id: str
+    artifact_type: str
+    file_path: str
+    extracted_text: str | None = None
+    processing_status: ProcessingStatus = ProcessingStatus.NEW
+    processed_at: datetime = Field(default_factory=_now)
+
+
+# ---------------------------------------------------------------------------
+# Silver models
+# ---------------------------------------------------------------------------
+
+
+class EventDetails(BaseModel):
+    """Joined event record written to silver.event_details."""
+
+    model_config = ConfigDict(strict=True)
+
+    fingerprint: str
+    url: HttpUrl
+    source: str
+    language: str
+    query_country: str | None = None
+    domain_country: str | None = None
+
+    # From bronze.event_dates
+    title: str
+    description: str
+    date_start: datetime | None = None
+    date_end: datetime | None = None
+    location_text: str
+    event_status: EventStatus
+
+    # From bronze.event_location
+    lat: float | None = None
+    lng: float | None = None
+    country: str | None = None
+    location_status: LocationStatus
+
+    # From bronze.event_category
+    category: str | None = None
+    category_status: CategoryStatus
+
+    artifact_urls: list[str] = []
+    ingested_at: datetime
+
+
+class EventArtifactsProcessed(BaseModel):
+    """LLM-extracted artifact fields written to silver.event_artifacts_details."""
 
     model_config = ConfigDict(strict=True)
 
@@ -121,8 +235,8 @@ class ProcessedArtifact(BaseModel):
     processed_at: datetime = Field(default_factory=_now)
 
 
-class SilverEvent(BaseModel):
-    """Translated event written to silver.events."""
+class EventDetailsTranslated(BaseModel):
+    """Translated event written to silver.event_details_translated."""
 
     model_config = ConfigDict(strict=True)
 
@@ -154,18 +268,14 @@ class SilverEvent(BaseModel):
     language: str
     target_language: str
 
-    # Artifact metadata
     artifact_urls: list[str] = []
-    artifact_paths: list[str] = []
-
-    # Timestamps & status
     ingested_at: datetime
     translated_at: datetime = Field(default_factory=_now)
     processing_status: ProcessingStatus = ProcessingStatus.DONE
 
 
-class SilverArtifact(BaseModel):
-    """Translated artifact written to silver.processed_artifacts."""
+class EventArtifactsTranslated(BaseModel):
+    """Translated artifact written to silver.event_artifacts_details_translated."""
 
     model_config = ConfigDict(strict=True)
 
@@ -188,31 +298,3 @@ class SilverArtifact(BaseModel):
     processing_status: ProcessingStatus = ProcessingStatus.DONE
     processed_at: datetime
     translated_at: datetime = Field(default_factory=_now)
-
-
-class SeenUrl(BaseModel):
-    """Dedup tracker written to staging.seen_urls."""
-
-    model_config = ConfigDict(strict=True)
-
-    url: HttpUrl
-    title: str
-    source: str
-    fingerprint: str
-    ingested_at: datetime = Field(default_factory=_now)
-
-
-class ScrapedPage(BaseModel):
-    """Raw scraped page written to staging.scraped_pages."""
-
-    model_config = ConfigDict(strict=True)
-
-    fingerprint: str
-    url: HttpUrl
-    title: str
-    raw_text: str
-    artifact_urls: list[str] = []
-    processing_status: ProcessingStatus = ProcessingStatus.NEW
-    robots_allowed: bool | None = None
-    error: str | None = None
-    scraped_at: datetime = Field(default_factory=_now)

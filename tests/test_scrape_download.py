@@ -7,15 +7,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from artlake.models.event import EventArtifact, ProcessingStatus
-from artlake.scrape.download import (
+from artlake.artifacts.download import (
     content_hash,
     detect_artifact_type,
     download_artifact,
     make_artifact,
     volume_path,
 )
-from artlake.scrape.pages import fingerprint as url_fingerprint
+from artlake.events.scrape import fingerprint as url_fingerprint
+from artlake.models.event import EventArtifact, ProcessingStatus
 
 # ---------------------------------------------------------------------------
 # content_hash
@@ -156,7 +156,7 @@ class TestDownloadArtifact:
     def test_success_returns_data_and_content_type(self) -> None:
         data = b"%PDF-1.4 content"
         mock_resp = self._mock_response(data, "application/pdf")
-        with patch("artlake.scrape.download.requests.get", return_value=mock_resp):
+        with patch("artlake.artifacts.download.requests.get", return_value=mock_resp):
             result_data, ct, error = download_artifact("https://example.com/doc.pdf")
         assert result_data == data
         assert ct == "application/pdf"
@@ -164,13 +164,13 @@ class TestDownloadArtifact:
 
     def test_strips_charset_from_content_type(self) -> None:
         mock_resp = self._mock_response(b"data", "image/jpeg; charset=utf-8")
-        with patch("artlake.scrape.download.requests.get", return_value=mock_resp):
+        with patch("artlake.artifacts.download.requests.get", return_value=mock_resp):
             _, ct, _ = download_artifact("https://example.com/img.jpg")
         assert ct == "image/jpeg"
 
     def test_skips_when_content_length_exceeds_max(self) -> None:
         mock_resp = self._mock_response(b"x", content_length="104857601")  # 100MB+1
-        with patch("artlake.scrape.download.requests.get", return_value=mock_resp):
+        with patch("artlake.artifacts.download.requests.get", return_value=mock_resp):
             data, _, error = download_artifact(
                 "https://example.com/big.pdf", max_bytes=1024
             )
@@ -184,7 +184,7 @@ class TestDownloadArtifact:
         resp.raise_for_status.return_value = None
         resp.headers = {"Content-Type": "application/pdf"}
         resp.iter_content.return_value = iter([big_chunk])
-        with patch("artlake.scrape.download.requests.get", return_value=resp):
+        with patch("artlake.artifacts.download.requests.get", return_value=resp):
             data, _, error = download_artifact(
                 "https://example.com/big.pdf", max_bytes=1024
             )
@@ -195,7 +195,7 @@ class TestDownloadArtifact:
     def test_returns_none_on_http_error(self) -> None:
         resp = MagicMock()
         resp.raise_for_status.side_effect = requests.HTTPError("404")
-        with patch("artlake.scrape.download.requests.get", return_value=resp):
+        with patch("artlake.artifacts.download.requests.get", return_value=resp):
             data, _, error = download_artifact("https://example.com/gone.pdf")
         assert data is None
         assert error is not None
@@ -203,7 +203,7 @@ class TestDownloadArtifact:
 
     def test_returns_none_on_connection_error(self) -> None:
         with patch(
-            "artlake.scrape.download.requests.get",
+            "artlake.artifacts.download.requests.get",
             side_effect=requests.ConnectionError("refused"),
         ):
             data, _, error = download_artifact("https://example.com/doc.pdf")
@@ -216,7 +216,7 @@ class TestDownloadArtifact:
         resp.raise_for_status.return_value = None
         resp.headers = {}
         resp.iter_content.return_value = iter([b"data"])
-        with patch("artlake.scrape.download.requests.get", return_value=resp):
+        with patch("artlake.artifacts.download.requests.get", return_value=resp):
             _, ct, _ = download_artifact("https://example.com/doc.pdf")
         assert ct is None
 
@@ -278,11 +278,11 @@ def test_run_download_writes_to_volume() -> None:
     Requires a live Databricks workspace with UC Volumes configured.
     Run with: uv run pytest -m integration
     """
-    from artlake.scrape.download import run_download
+    from artlake.artifacts.download import run_download
 
     run_download(
         artifact_url="https://www.w3.org/WAI/WCAG21/wcag21.pdf",
-        raw_events_table="artlake.bronze.raw_events",
-        artifacts_table="artlake.bronze.artifacts",
-        volume_root="/Volumes/artlake/volumes/raw_artifacts",
+        event_dates_table="artlake.bronze.event_dates",
+        event_artifacts_table="artlake.bronze.event_artifacts",
+        volume_root="/Volumes/artlake/volumes/event_artifacts",
     )

@@ -1,20 +1,17 @@
-"""Geocoding + country filter (artlake-geocode entry point).
+"""Geocoding (artlake-geocode entry point).
 
-Reads CleanEvent records from raw_events where processing_status='new',
-geocodes location_text via Nominatim (geopy) with an LLM fallback for
-strings that Nominatim cannot resolve, filters by target_countries,
-and updates processing_status:
-  - 'done'   → resolved country is in target_countries
-  - 'failed' → unresolvable location (country set to 'unknown') OR resolved
-               country not in target_countries
+Reads EventDate records from bronze.event_dates where event_status IN
+('future', 'undefined'), geocodes location_text via Nominatim (geopy) with an
+LLM fallback for strings that Nominatim cannot resolve, and writes
+EventLocation records to bronze.event_location.
+
+location_status values:
+  identified         → country resolved (Nominatim or LLM)
+  missing            → unresolvable location
+  requires_validation → country resolved but not in target_countries
 
 lat/lng are stored only when Nominatim resolves; LLM fallback provides the
 country code without coordinates (lat/lng remain None).
-
-Three country signals available downstream:
-  query_country  — country from the original search query (from search_results)
-  domain_country — country inferred from URL TLD (set by clean-events step)
-  country        — geocoded/LLM-resolved country (set by this step)
 """
 
 from __future__ import annotations
@@ -25,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from openai import OpenAI
 
-from artlake.models.event import CleanEvent, ProcessingStatus
+from artlake.models.event import EventDate, EventLocation, LocationStatus
 
 if TYPE_CHECKING:
     pass
@@ -214,13 +211,13 @@ def llm_resolve_country(
 
 
 def apply_geocoding(
-    events: list[CleanEvent],
+    events: list[EventDate],
     target_countries: list[str],
     geocode_fn: GeocodeFn,
     llm_address_fn: LLMAddressFn | None = None,
     llm_country_fn: LLMCountryFn | None = None,
-) -> list[CleanEvent]:
-    """Geocode events and apply country filter.
+) -> list[EventLocation]:
+    """Geocode events and return EventLocation records.
 
     Resolution happens in three stages, each used only when the previous fails:
 
@@ -228,32 +225,26 @@ def apply_geocoding(
     2. LLM extracts a clean address → Nominatim on that address → lat/lng + country
     3. LLM returns ISO-3166-1 alpha-2 country code directly (no coordinates)
 
-    All events are returned with updated lat, lng, country, and
-    processing_status. In-memory caches ensure identical location strings
-    are processed only once per call.
-
     Status rules:
-      - country in target_countries → processing_status='done'
-      - unresolvable (country=None) → country='unknown', status='failed'
-      - resolved but country not in target_countries → status='failed'
+      - country resolved and in target_countries → location_status='identified'
+      - unresolvable (country=None)              → location_status='missing'
+      - resolved but not in target_countries     → location_status='requires_validation'
 
     Args:
-        events: CleanEvent records to geocode (all should have status='new').
+        events: EventDate records to geocode.
         target_countries: ISO-3166-1 alpha-2 codes to accept (e.g. ["NL", "BE"]).
         geocode_fn: Rate-limited geocoding callable.
-        llm_address_fn: Optional LLM callable to normalize messy location text
-            into a clean geocodable address for a second Nominatim attempt.
-        llm_country_fn: Optional LLM callable of last resort — returns country
-            code when Nominatim still fails after address normalization.
+        llm_address_fn: Optional LLM callable to normalize messy location text.
+        llm_country_fn: Optional LLM callable of last resort for country code.
 
     Returns:
-        Updated events list (same length as input, order preserved).
+        EventLocation list (same length as input, order preserved).
     """
     geocode_cache: dict[str, GeoResult] = {}
     address_cache: dict[str, str | None] = {}
     country_cache: dict[str, str | None] = {}
     target_set = {c.upper() for c in target_countries}
-    updated: list[CleanEvent] = []
+    result: list[EventLocation] = []
 
     for event in events:
         lat, lng, country_code = geocode_location(
@@ -294,14 +285,14 @@ def apply_geocoding(
                 )
 
         if country_code is None:
-            updated.append(
-                event.model_copy(
-                    update={
-                        "lat": lat,
-                        "lng": lng,
-                        "country": "unknown",
-                        "processing_status": ProcessingStatus.FAILED,
-                    }
+            result.append(
+                EventLocation(
+                    fingerprint=event.fingerprint,
+                    location_text=event.location_text,
+                    lat=lat,
+                    lng=lng,
+                    country=None,
+                    location_status=LocationStatus.MISSING,
                 )
             )
             logger.warning(
@@ -310,41 +301,56 @@ def apply_geocoding(
                 event.location_text,
             )
         elif country_code in target_set:
-            updated.append(
-                event.model_copy(
-                    update={
-                        "lat": lat,
-                        "lng": lng,
-                        "country": country_code,
-                        "processing_status": ProcessingStatus.DONE,
-                    }
-                )
-            )
-            logger.info("Accepted event {} (country={})", event.fingerprint, country_code)
-        else:
-            updated.append(
-                event.model_copy(
-                    update={
-                        "lat": lat,
-                        "lng": lng,
-                        "country": country_code,
-                        "processing_status": ProcessingStatus.FAILED,
-                    }
+            result.append(
+                EventLocation(
+                    fingerprint=event.fingerprint,
+                    location_text=event.location_text,
+                    lat=lat,
+                    lng=lng,
+                    country=country_code,
+                    location_status=LocationStatus.IDENTIFIED,
                 )
             )
             logger.info(
-                "Filtered event {} (country={} not in {})",
+                "Identified event {} (country={})", event.fingerprint, country_code
+            )
+        else:
+            result.append(
+                EventLocation(
+                    fingerprint=event.fingerprint,
+                    location_text=event.location_text,
+                    lat=lat,
+                    lng=lng,
+                    country=country_code,
+                    location_status=LocationStatus.REQUIRES_VALIDATION,
+                )
+            )
+            logger.info(
+                "Requires validation: event {} (country={} not in {})",
                 event.fingerprint,
                 country_code,
                 target_countries,
             )
 
-    return updated
+    return result
 
 
 # ---------------------------------------------------------------------------
 # Spark integration (pragma: no cover — tested via integration marker)
 # ---------------------------------------------------------------------------
+
+
+def _create_default_client() -> OpenAI:  # pragma: no cover
+    """Create an OpenAI client using Databricks workspace auth."""
+    from databricks.sdk import WorkspaceClient
+
+    w = WorkspaceClient()
+    host = w.config.host or ""
+    token = w.tokens.create(lifetime_seconds=1200).token_value
+    return OpenAI(
+        api_key=token,
+        base_url=f"{host.rstrip('/')}/serving-endpoints",
+    )
 
 
 def _build_geocode_fn(env: str) -> GeocodeFn:  # pragma: no cover
@@ -357,11 +363,7 @@ def _build_geocode_fn(env: str) -> GeocodeFn:  # pragma: no cover
 
 
 def _build_llm_address_fn(client: OpenAI, model: str) -> LLMAddressFn:  # pragma: no cover
-    """Return an LLM-backed address normalization callable.
-
-    The returned function sends location_text to the LLM and returns
-    its raw text response for parsing by llm_extract_address.
-    """
+    """Return an LLM-backed address normalization callable."""
 
     def extract(location_text: str) -> str | None:
         response = client.chat.completions.create(
@@ -382,11 +384,7 @@ def _build_llm_address_fn(client: OpenAI, model: str) -> LLMAddressFn:  # pragma
 
 
 def _build_llm_country_fn(client: OpenAI, model: str) -> LLMCountryFn:  # pragma: no cover
-    """Return an LLM-backed country resolution callable.
-
-    The returned function sends location_text to the LLM and returns
-    its raw text response for parsing by llm_resolve_country.
-    """
+    """Return an LLM-backed country resolution callable."""
 
     def resolve(location_text: str) -> str | None:
         response = client.chat.completions.create(
@@ -407,26 +405,28 @@ def _build_llm_country_fn(client: OpenAI, model: str) -> LLMCountryFn:  # pragma
 
 
 def run_geocode(  # pragma: no cover
-    raw_events_table: str,
+    event_dates_table: str,
+    event_location_table: str,
     target_countries: list[str],
     env: str = "dev",
     model: str = "databricks-meta-llama-3-3-70b-instruct",
 ) -> int:
-    """Geocode new CleanEvent rows in raw_events and update via MERGE INTO.
+    """Geocode future/undefined EventDate rows and write EventLocation records.
 
-    Reads rows where processing_status='new', geocodes location_text via
-    Nominatim (1 req/s rate-limited) with LLM fallback for unresolvable
-    strings, applies country filter, and updates lat/lng/country/
-    processing_status in the Delta table on fingerprint.
+    Reads only future/undefined events from event_dates (pipeline gate),
+    anti-joins against event_location to skip already-geocoded fingerprints,
+    geocodes location_text via Nominatim (1 req/s rate-limited) with LLM
+    fallback, and appends EventLocation records to event_location.
 
     Args:
-        raw_events_table: Fully-qualified raw_events Delta table.
+        event_dates_table: Fully-qualified bronze.event_dates Delta table.
+        event_location_table: Fully-qualified bronze.event_location Delta table.
         target_countries: ISO-3166-1 alpha-2 codes to accept (e.g. ["NL", "BE"]).
         env: Deployment environment tag used as Nominatim user_agent suffix.
         model: Databricks Foundation Model ID used for LLM country fallback.
 
     Returns:
-        Number of events accepted (processing_status set to 'done').
+        Number of events with location_status='identified'.
     """
     from pyspark.sql import SparkSession
     from pyspark.sql import functions as F
@@ -434,119 +434,115 @@ def run_geocode(  # pragma: no cover
 
     spark = SparkSession.builder.getOrCreate()
 
-    # Ensure fingerprint exists in the physical table (pre-dates issue #9 tables)
-    existing_cols = set(spark.table(raw_events_table).columns)
-    if "fingerprint" not in existing_cols:
-        logger.info("fingerprint column missing — adding and backfilling from url")
-        spark.sql(f"ALTER TABLE {raw_events_table} ADD COLUMN fingerprint STRING")
-        spark.sql(
-            f"UPDATE {raw_events_table} SET fingerprint = sha2(url, 256)"
-            f" WHERE fingerprint IS NULL"
-        )
-        existing_cols.add("fingerprint")
+    # Pipeline gate: only future/undefined events proceed
+    events_df = spark.table(event_dates_table).filter(
+        F.col("event_status").isin("future", "undefined")
+    )
 
-    # Ensure new country signal columns exist (added in issue #14)
-    for col_name in ("query_country", "domain_country"):
-        if col_name not in existing_cols:
-            spark.sql(f"ALTER TABLE {raw_events_table} ADD COLUMN {col_name} STRING")
-            existing_cols.add(col_name)
+    # Anti-join: skip fingerprints already written to event_location
+    if spark.catalog.tableExists(event_location_table):
+        done_df = spark.table(event_location_table).select("fingerprint")
+        events_df = events_df.join(done_df, on="fingerprint", how="left_anti")
 
-    table_df = spark.table(raw_events_table)
-
-    events_df = table_df.filter(F.col("processing_status") == ProcessingStatus.NEW)
-    rows = events_df.collect()
+    rows = events_df.select("fingerprint", "location_text").collect()
 
     if not rows:
         logger.info("No new events to geocode")
         return 0
 
-    logger.info("Geocoding {} new events", len(rows))
+    logger.info("Geocoding {} events", len(rows))
 
     geocode_fn = _build_geocode_fn(env)
-
-    from artlake.clean.events import _build_openai_client
-
-    llm_client = _build_openai_client()
+    llm_client = _create_default_client()
     llm_address_fn = _build_llm_address_fn(llm_client, model)
     llm_country_fn = _build_llm_country_fn(llm_client, model)
 
+    # Build lightweight EventDate stubs (only fingerprint + location_text needed)
     events = [
-        CleanEvent(
+        EventDate(
             fingerprint=row["fingerprint"],
-            title=row["title"],
-            description=row["description"],
-            date_start=row["date_start"],
-            date_end=row["date_end"],
+            title="",
+            description="",
             location_text=row["location_text"] or "",
-            lat=row["lat"],
-            lng=row["lng"],
-            query_country=row["query_country"],
-            domain_country=row["domain_country"],
-            country=row["country"],
-            language=row["language"],
-            source=row["source"],
-            url=row["url"],
-            artifact_urls=list(row["artifact_urls"] or []),
-            artifact_paths=list(row["artifact_paths"] or []),
-            processing_status=ProcessingStatus(row["processing_status"]),
+            language="UNKNOWN",
+            source="",
+            url="http://placeholder",  # type: ignore[arg-type]
         )
         for row in rows
     ]
 
-    updated = apply_geocoding(
+    locations = apply_geocoding(
         events, target_countries, geocode_fn, llm_address_fn, llm_country_fn
     )
 
-    update_schema = StructType(
+    location_schema = StructType(
         [
             StructField("fingerprint", StringType(), False),
+            StructField("location_text", StringType(), False),
             StructField("lat", FloatType(), True),
             StructField("lng", FloatType(), True),
             StructField("country", StringType(), True),
-            StructField("processing_status", StringType(), False),
+            StructField("location_status", StringType(), False),
         ]
     )
-    # Deduplicate by fingerprint — raw_events may have duplicate URLs
+    # Deduplicate by fingerprint
     seen: set[str] = set()
-    update_rows = []
-    for e in updated:
-        if e.fingerprint not in seen:
-            seen.add(e.fingerprint)
-            update_rows.append(
-                (e.fingerprint, e.lat, e.lng, e.country, str(e.processing_status))
+    location_rows = []
+    for loc in locations:
+        if loc.fingerprint not in seen:
+            seen.add(loc.fingerprint)
+            location_rows.append(
+                (
+                    loc.fingerprint,
+                    loc.location_text,
+                    loc.lat,
+                    loc.lng,
+                    loc.country,
+                    str(loc.location_status),
+                )
             )
-    update_df = spark.createDataFrame(update_rows, schema=update_schema)
-    update_df.createOrReplaceTempView("_geocode_updates")
 
-    spark.sql(f"""
-        MERGE INTO {raw_events_table} AS target
-        USING _geocode_updates AS src
-        ON target.fingerprint = src.fingerprint
-        WHEN MATCHED THEN UPDATE SET
-            target.lat = src.lat,
-            target.lng = src.lng,
-            target.country = src.country,
-            target.processing_status = src.processing_status
-    """)
+    location_df = spark.createDataFrame(location_rows, schema=location_schema)
 
-    accepted = sum(1 for e in updated if e.processing_status == ProcessingStatus.DONE)
-    logger.info(
-        "Geocoding complete: {} accepted, {} failed/filtered",
-        accepted,
-        len(updated) - accepted,
+    parts = event_location_table.split(".")
+    if len(parts) == 3:
+        catalog, db, _ = parts
+        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{db}")
+
+    location_df.write.format("delta").mode("append").option(
+        "mergeSchema", "true"
+    ).saveAsTable(event_location_table)
+
+    identified = sum(
+        1 for loc in locations if loc.location_status == LocationStatus.IDENTIFIED
     )
-    return accepted
+    logger.info(
+        "Geocoding complete: {} identified, {} missing, {} requires_validation",
+        identified,
+        sum(1 for loc in locations if loc.location_status == LocationStatus.MISSING),
+        sum(
+            1
+            for loc in locations
+            if loc.location_status == LocationStatus.REQUIRES_VALIDATION
+        ),
+    )
+    return identified
 
 
 def main() -> None:  # pragma: no cover
     """Entry point for artlake-geocode wheel task."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="ArtLake geocoder + country filter")
+    parser = argparse.ArgumentParser(description="ArtLake geocoder")
     parser.add_argument(
-        "--raw-events-table",
-        default="artlake.bronze.raw_events",
-        help="Fully-qualified raw_events Delta table",
+        "--event-dates-table",
+        default="artlake.bronze.event_dates",
+        help="Fully-qualified bronze.event_dates Delta table",
+    )
+    parser.add_argument(
+        "--event-location-table",
+        default="artlake.bronze.event_location",
+        help="Fully-qualified bronze.event_location Delta table",
     )
     parser.add_argument(
         "--target-countries",
@@ -566,7 +562,8 @@ def main() -> None:  # pragma: no cover
     )
     args = parser.parse_args()
     run_geocode(
-        raw_events_table=args.raw_events_table,
+        event_dates_table=args.event_dates_table,
+        event_location_table=args.event_location_table,
         target_countries=args.target_countries,
         env=args.env,
         model=args.model,
